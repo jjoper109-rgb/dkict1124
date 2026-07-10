@@ -1,0 +1,39 @@
+name: Apply organization links
+
+on:
+  push:
+    branches:
+      - feature/organization-links
+    paths:
+      - maintenance-contract-manager/apply_organization_links.py
+      - .github/workflows/apply-organization-links.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/organization-links
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply source changes
+        run: python maintenance-contract-manager/apply_organization_links.py
+      - name: Validate Python and JavaScript
+        run: |
+          python -m py_compile maintenance-contract-manager/server.py maintenance-contract-manager/organization_links.py
+          node --check maintenance-contract-manager/app.js
+          cd maintenance-contract-manager
+          python -m unittest test_organization_links.py
+      - name: Commit generated changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add maintenance-contract-manager/server.py maintenance-contract-manager/app.js
+          git diff --cached --quiet || git commit -m "Implement bilateral organization contract links"
+          git push origin HEAD:feature/organization-links
