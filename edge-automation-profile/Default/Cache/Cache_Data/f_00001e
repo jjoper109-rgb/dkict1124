@@ -1,0 +1,1548 @@
+this._app = this._app || {};
+this._app.locale = this._app.locale || {};
+this._app.locale.extension = this._app.locale.extension || {};
+
+(function (_) {
+
+  _.tmpl_contextmenu = {
+    ___fromUser: {
+      compose: "메일쓰기",
+      addressbookAppend: "주소록에 추가",
+      favoritesAppend: "즐겨찾기 추가",
+      blacklist: "수신거부",
+      searchName: "E-mail 검색",
+      mailThis: "현재메일함",
+      mailAll: "전체메일함"
+    },
+    ___viewUser: {
+      compose: "메일쓰기",
+      blacklist: "수신거부",
+      addressbookAppend: "주소록에 추가",
+      favoritesAppend: "즐겨찾기 추가"
+    },
+  },
+
+  _.tmpl_layer_loading = {
+
+
+    ___data: {
+      message: "데이터 로딩중입니다. 잠시만 기다려주세요."
+    },
+    ___save: {
+      message: "데이터를 저장중입니다. 잠시만 기다려주세요."
+    },
+    ___delete: {
+      message: "데이터를 삭제중입니다. 잠시만 기다려주세요."
+    },
+    ___Backup: {
+      message: "데이터를 백업중입니다. 잠시만 기다려주세요."
+    },
+    ___SendCanceled: {
+      message: "발송 취소 중입니다. 잠시만 기다려주세요."
+    },
+
+    // 메일 쓰기
+    ___sendMail: {
+      message: "메일을 전송중입니다. 잠시만 기다려주세요.",
+    },
+    ___saveMailTemporary: {
+      message: "메일을 임시저장중입니다. 잠시만 기다려주세요."
+    },
+    ___mailSeenAll: {
+      format_message: "<strong>{{:%s}}</strong>의 메일을 읽음 처리 중입니다.잠시만 기다려주세요."
+    },
+
+    ___approval: {
+      message: "승인 중입니다. 잠시만 기다려주세요."
+    },
+    ___disapproval: {
+      message: "반려 중입니다. 잠시만 기다려주세요."
+    },
+    ___retrieve: {
+      message: "회수 중입니다. 잠시만 기다려주세요."
+    },
+  }
+
+  _.tmpl_layer_dialog = {
+    borderIcons: { close: { tooltip: "닫기" } },
+
+    ___InputYourPassword: {
+      message: "비밀번호를 입력해주세요.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+    ___SameCurrentPassword: {
+      message: "현재 비밀번호와 일치합니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+    ___ValidatePassword: {
+      format_message: "비밀번호는 숫자와 영문 특수문자 조합으로 {{:%s}}자 이상 입력 하셔야 합니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+    ___PasswordNotMatch: {
+      message: "비밀번호가 일치하지 않습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+    ___CurrentPasswordNotMatch: {
+      message: "현재 비밀번호와 일치하지 않습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+    ___PasswordChangeError: {
+      message: "비밀번호를 변경하지 못하였습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+
+    ___CouldNotFetchUserInformation: {
+      borderIcons: { close: { class: "hide" } }, // 운영환경에서는 hide 스타일 적용 해야 합니다. 
+      message: "사용자 정보를 가져오지 못했습니다.<br>로그인 페이지로 이동합니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" }
+      ]
+    },
+    ___CouldNotFetchUserInformationGoToGroupware: {
+      borderIcons: { close: { class: "hide" } }, // 운영환경에서는 hide 스타일 적용 해야 합니다. 
+      message: "사용자 정보를 가져오지 못했습니다.<br>그릅웨어로 이동합니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" }
+      ]
+    },
+    ___YourSessionHasEnded: {
+      borderIcons: { close: { class: "hide" } }, // 운영환경에서는 hide 스타일 적용 해야 합니다. 
+      message: "세션이 종료되었습니다.<br>로그인 페이지로 이동합니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" }
+      ]
+    },
+    ___YourSessionHasEndedGoToGroupware: {
+      borderIcons: { close: { class: "hide" } }, // 운영환경에서는 hide 스타일 적용 해야 합니다. 
+      message: "세션이 종료되었습니다.<br>그릅웨어로 이동합니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" }
+      ]
+    },
+    ___YourSessionHasEndedClose: {
+      borderIcons: { close: { class: "hide" } }, // 운영환경에서는 hide 스타일 적용 해야 합니다. 
+      message: "세션이 종료되었습니다.<br>현재 창을 닫습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" }
+      ]
+    },
+    ___NetworkError: {
+      borderIcons: { close: { class: "hide" } }, // 운영환경에서는 hide 스타일 적용 해야 합니다.
+      message: "연결 시간이 초과되었습니다.<br>페이지를 다시 로드합니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" }
+      ]
+    },
+  
+    ___NoMessagesToApply: {
+      message: "적용할 메일이 없습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]      
+    },
+
+
+    ___warning___DataSaveFail: {
+      message: "데이터를 저장하지 못하였습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]      
+    },
+                                                                                                                  
+                                                                                                                  
+    ___warning___Fail: {
+      message: "실패 하였습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]      
+    },
+          
+          
+    ___NotSupportedCommand: {
+      message: "지원되지 않는 명령어 입니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]      
+    },
+
+
+    ___validate___exceptionDomain: {
+      message: "등록할 수 없는 도메인입니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+
+
+    ___requiredValueNotFound: {
+      message: "필수 값이 입력되지 않았습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+
+
+    // 리스트 ----------
+
+    ___validate___searchWordNotFound: {
+      message: "검색어를 입력해주세요.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]      
+    },
+    ___validate___folderNameNotFound: {
+      message: "폴더 이름을 입력해주세요.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]      
+    },
+    ___validateNameAlreadyExists: {
+      message: "이미 존재하는 이름입니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+    ___validateNameInvalid: {
+      message: "이름이 올바르지 않습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+    ___validate___labelNameNotFound: {
+      message: "라벨 이름을 입력해주세요.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]      
+    },
+    ___warning___createFolder: {
+      message: "폴더를 생성하지 못하였습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]      
+    },
+    ___validate___selectMoveFolder: {
+      message: "이동할 폴더를 선택하셔야 합니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+    ___validate___selectedLabel: {
+      message: "선택된 라벨이 없습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+
+    ___NoItemsSelected: {
+      message: "선택된 항목이 없습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+
+    // 수신확인 사용자 목록 다이얼로그
+    ___receiveconfirm: {
+      title: "수신확인",
+      buttons: [
+        { text: "발송취소", tooltip: "발송취소", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+
+    ___BlacklistMailAddress: {
+      borderIcons: { close: { class: "hide" } }, // 운영환경에서는 hide 스타일 적용 해야 합니다. 
+      title: "수신거부",
+      format_message: "수신거부 목록에 등록합니다.<br/>수신거부 메일: {{:%s}}",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+    ___AddedToBlacklist: {
+      borderIcons: { close: { class: "hide" } }, // 운영환경에서는 hide 스타일 적용 해야 합니다. 
+      message: "수신거부 목록에 추가되었습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" },
+      ]
+    },
+    ___FailedToAddToBlacklist: {
+      borderIcons: { close: { class: "hide" } }, // 운영환경에서는 hide 스타일 적용 해야 합니다. 
+      message: "수신거부 목록에 추가하지 못하였습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" },
+      ]
+    },
+    ___BlacklistExceededTheNumberOfItems: {
+      borderIcons: { close: { class: "hide" } }, // 운영환경에서는 hide 스타일 적용 해야 합니다. 
+      message: "수신거부 목록에 추가할 수 있는 항목 수가 초과되었습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" },
+      ]
+    },
+    // ---------- 리스트 
+
+    ___RemoveImportantMailConfirm: {
+      message: "중요표시 된 메일이 포함되어 있습니다. 삭제하시겠습니까?<br>삭제한 메일은 휴지통으로 이동됩니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+
+
+    ___deleteMail: {
+      message: "메일을 삭제하시겠습니까?<br>삭제한 메일은 영구 삭제되어 복구할 수 없습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+
+    ___mail_delete_all: {
+      message: "모든 메일을 삭제하시겠습니까?<br>삭제한 메일은 영구 삭제되어 복구할 수 없습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+    ___createLabel: {
+      title: "라벨추가",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+    ___passwordChange: {
+      title: "비밀번호 변경",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+
+
+    ___uploadAttachments: {
+      borderIcons: { close: { class: "hide" } }, // 운영환경에서는 hide 스타일 적용 해야 합니다. 
+      title: "첨부파일 업로드",
+    },
+    ___uploadAttachmentsLargeCapacity: {
+      borderIcons: { close: { class: "hide" } }, // 운영환경에서는 hide 스타일 적용 해야 합니다. 
+      title: "대용량 첨부파일 업로드",
+    },
+    ___uploadAttachmentsTemporary: {
+      borderIcons: { close: { class: "hide" } }, // 운영환경에서는 hide 스타일 적용 해야 합니다. 
+      title: "임시저장 첨부파일 업로드",
+    },
+
+    ___MailUpload: {
+      borderIcons: { close: { class: "hide" } }, // 운영환경에서는 hide 스타일 적용 해야 합니다. 
+      title: "메일 업로드",
+
+      FullTransfer: "전체 전송",
+      TransferFiles: "전송 파일",
+      TransmissionSpeed: "전송 속도",
+      TransmissionCapacity: "전송 용량",
+      TransmissionTime: "전송 시간",
+      FileList: "파일 리스트",
+    },
+
+    ___validate___label_name_not_found: {
+      message: "라벨 이름을 입력해주세요.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+
+
+    ___addressbook: {
+      title: "주소록",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+
+    // 메일 보내기
+    ___ComposeCancelComfirm: {
+      borderIcons: { close: { class: "hide" } },
+      message: "작성중인 내용은 저장되지 않습니다. 메일 쓰기를 그만하시겠습니까?",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban" }
+      ]
+    },
+
+    // 서명변경
+    ___ComposeChangeSignatureComfirm: {
+      borderIcons: { close: { class: "hide" } },
+      message: "작성중인 제목과 내용은 저장되지 않습니다. 서명을 변경하시겠습니까?",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban" }
+      ]
+    },
+
+    ___ValidateSecurePassword: {
+      message: "보안메일 비밀번호는 6~16자의 문자를 사용하여 입력하셔야 합니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+
+
+    ___validate___recipientLength: {
+      message: "받는 사람을 한명 이상 입력해 주세요.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+    ___validate___internetAddress: {
+      message: "인식할 수 없는 주소가 있습니다. 주소의 형태가 모두 올바른지 확인하세요.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+    ___validate___sendNoSubjectMail: {
+      message: "제목이 없습니다. 그대로 메일을 보내시겠습니까?",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+
+    ___validate___uploadAttachmentsMaxcount: {
+      message: "업로드 가능한 파일 수를 초과하였습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ],
+    },
+    ___validate___uploadMaxbytes: {
+      message: "업로드 가능한 용량을 초과하였습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ],
+    },
+    
+//    ___waring___sendMail: {
+//      message: "메일 보내기를 실패하였습니다.",
+//      buttons: [
+//        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+//      ],
+//    },
+
+	___waring___sendMail: {
+      message: "삽입 가능한 이미지 용량을 초과하였습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ],
+    },
+
+    ___waring___sendMail___uploadfail: {
+      message: "파일 업로드에 실패하였습니다.<br>파일을 재첨부 하시거나, 용량을 확인해주세요.<br>문제가 지속되면 관리자에게 문의하여 주시기 바랍니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ],
+    },
+
+    ___waring___sendMail___oversize: {
+      message: "메일 용량 초과.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ],
+    },
+
+    // 뷰
+    ___mailNotFound: {
+      borderIcons: { close: { class: "hide" } }, // 운영환경에서는 hide 스타일 적용 해야 합니다. 
+      message: "메일이 이동 되었거나 삭제되었습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" }
+      ]
+    },
+
+
+
+    ___waring___changedValueCancelConfirm: {
+      message: "변경된 내용이 저장되지 않습니다. 변경사항을 취소하시겠습니까?",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+
+
+    // 환경설정/메일함관리/기본메일함
+
+    ___MailboxEmpty: {
+      format_title: "{{:%s}} 비우기",
+      message: "메일함의 메일을 삭제하시겠습니까?<br>삭제한 메일은 <em class='tc_red'>영구 삭제</em>되어 복구할 수 없습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+
+    ___deleteFolder: {
+      format_title: "{{:%s}} 폴더 삭제",
+      message: "폴더를 삭제하시겠습니까?<br>삭제한 폴더는 <em class='tc_red'>영구 삭제</em>되어 복구할 수 없습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+
+    ___deleteMailBox: {
+      format_title: "{{:%s}} 메일함 삭제",
+      message: "메일함을 삭제하시겠습니까?<br>삭제한 메일함은 <em class='tc_red'>영구 삭제</em>되어 복구할 수 없습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+
+    // 환경설정/메일함관리/라벨
+    ___deleteLabel: {
+      format_title: "{{:%s}} 라벨 삭제",
+      message: "라벨를 삭제하시겠습니까?<br>삭제한 라벨은 <em class='tc_red'>영구 삭제</em>되어 복구할 수 없습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+    ___LabelEmpty: {
+      format_title: "{{:%s}} 라벨 비우기",
+      message: "라벨의 메일을 삭제하시겠습니까?<br>삭제한 메일은 <em class='tc_red'>영구 삭제</em>되어 복구할 수 없습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+
+    // 환경설정 자동분류 목록 추가 다이얼로그
+    ___settings_filter_list_item_append: {
+      title: "자동분류 추가",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+    // 환경설정 자동분류 목록 수정 다이얼로그
+    ___settings_filter_list_item_modify: {
+      title: "자동분류 수정",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+    ___validate_filters_valueNotFound: {
+      message: "자동분류 기준값을 입력하세요.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+
+
+    // 환경설정 외부메일 목록 추가 다이얼로그
+    ___settings_externalmail_list_item_append: {
+      title: "외부메일계정 추가",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+    // 환경설정 외부메일 목록 수정 다이얼로그
+    ___settings_externalmail_list_item_modify: {
+      title: "외부메일계정 수정",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+    // 환경설정 외부메일 가져오기 성공
+    ___settings_externalmail__Succ: {
+      message: "외부메일 가져오기를 완료하였습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+    // 환경설정 외부메일 가져오기 실패
+    ___settings_externalmail__Fail: {
+      message: "외부메일 가져오지 못하였습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]
+    },
+
+
+    ___settings_receivemngt_writelist__ValueIsInvalidate: {
+      message: "메일주소 또는 @도메인을 입력해주세요.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]      
+    },
+    ___settings_receivemngt_writelist__ValueRegistered: {
+      message: "등록된 메일주소 또는 @도메인 입니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]      
+    },
+
+
+
+
+    // 환경설정 포워딩 목록 추가 다이얼로그
+    ___settings_forwarding_list_item_append: {
+      borderIcons: { close: { class: "hide" } },
+      title: "포워딩 추가",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+    // 환경설정 포워딩 목록 수정 다이얼로그
+    ___settings_forwarding_list_item_modify: {
+      title: "포워딩 수정",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+
+
+    // 환경설정 메일업로드 성공
+    ___settings_mailupload__Succ: {
+      message: "메일 파일을 업로드를 완료하였습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]      
+    },
+    // 환경설정 메일업로드 실패
+    ___settings_mailupload__Fail: {
+      message: "메일 파일을 업로드하지 못하였습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]      
+    },
+
+    // 환경설정 주소록 목록 추가 다이얼로그
+    ___settings_addressbook_list_item_append: {
+      title: "연락처 추가",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+    // 환경설정 주소록 목록 수정 다이얼로그
+    ___settings_addressbook_list_item_modify: {
+      title: "연락처 수정",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+    ___contactDelete: {
+      message: "연락처를 삭제하시겠습니까?<br>삭제한 연락처는 영구 삭제되어 복구할 수 없습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+        { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+      ]
+    },
+
+    ___nameNotFound: {
+      message: "이름을 입력해주세요.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]      
+    },
+    ___emailNotFound: {
+      message: "이메일을 입력해주세요.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]      
+    },
+    ___notValidEmailFormat: {
+      message: "올바른 이메일 형식이 아닙니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]      
+    },
+    ___canNotSave: {
+      message: "저장할 수 없습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]      
+    },
+    ___canNotdelete: {
+      message: "삭제할 수 없습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]      
+    },
+    ___limitForward: {
+      message: "포워딩은 5개까지 등록 할 수 있습니다.",
+      buttons: [
+        { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus", code: "mbClose" }
+      ]      
+    },
+
+  }
+
+  // 툴바
+  _.tmpl_toolbar = {
+    MenuList: {
+      AllMenus: "전체메뉴",
+      AllMenus_Describe: "메뉴를 제외한 나머지 구역을 클릭하면 닫힘",
+    },
+  };
+  // 드로워
+  _.tmpl_drawer = {
+    Title: "전자메일",
+    TooltipAction: "메일쓰기",
+    Folders: {
+      Default: "메일함",
+      Unseen: "안읽음",
+      Receiveconfirm: "수신확인",
+      Empty: "비우기",
+      Personal: "내 메일함",
+      Label: "라벨",
+    },
+    TooltipSettings: "설정",
+    TooltipFold: "접기",
+    TooltipUnfold: "펴기",
+  }
+  //
+  _.tmpl_layer_dialog_createLabel = {
+    label_placeholder: "라벨이름",
+  }
+  // 레이어 다이얼로그 비밀번호 변경
+  _.tmpl_layer_dialog_passwordChange = {
+    currentPassword: "현재 비밀번호",
+    newPassword: "새 비밀번호",
+    confirmPassword: "비밀번호 확인",
+  }
+  // 콘텐츠 헤더 메일 리스트
+  _.tmpl_content_head__mail_list = {
+    
+    Refresh: { Tooltip: "새로고침" },
+    Search: {
+      Tooltip: "검색",
+      TooltipAdvanced: "상세검색",
+
+      subject: "제목",
+      body: "본문",
+      from: "보낸사람",
+      to: "받는사람",
+      cc: "참조",
+      Placeholder: "검색어 입력",
+
+
+      MailFolder: "메일함",
+
+      Term: "기간",
+
+      all: "전체",
+      yesterday: "어제",
+      m7d: "1주일",
+      m1m: "1개월",
+      m3m: "3개월",
+      m6m: "6개월",
+      m1y: "1년",
+      custom: "직접입력",
+
+      TooltipReset: "재설정",
+    },
+    Functions: {
+      Checkbox: {
+        All: "전체선택",
+        Seen: "읽음메일",
+        Unseen: "읽지않은메일",
+        Flagged: "별표메일",
+        Important: "중요메일",
+        None: "선택해제",
+      },
+      Resend: { Tooltip: "다시보내기", },
+      Delete: {
+        Tooltip: "삭제",
+        Trash: "휴지통으로 이동",
+        Forever: "완전삭제",
+      },
+      Reply: { Tooltip: "답장" },
+      ReplyAll: { Tooltip: "전체답장" },
+      Relay: { Tooltip: "전달" },
+      Move: {
+        Tooltip: "이동",
+        TooltipAppend: "추가",
+        TooltipMove: "이동",
+        TooltipMgr: "관리",
+      },
+      Labels: {
+        Tooltip: "라벨",
+        TooltipApply: "적용",
+        TooltipCreate: "만들기",
+        TooltipMgr: "관리",
+      },
+      More: {
+        Tooltip: "더보기",
+        SeenAll: "모두 읽은 상태로 표시",
+        Explication: "추가작업을 보려면 메일 선택",
+        Seen: "읽은 상태로 표시",
+        Unseen: "읽지 않은 상태로 표시",
+        RemoveLabel: "라벨 삭제",
+        Print: "인쇄하기",
+        Save: "저장하기",
+        blacklist: "수신거부",
+      },
+    },
+    Options: {
+      FiltersSorts: {
+        Tooltip: "필터/정렬",
+
+        all: "모든 메일",
+        unseen: "안 읽은 메일",
+        seen: "읽은 메일",
+        flagged: "별표 메일",
+        important: "중요 메일",
+        attachments: "첨부 메일",
+
+        date: "날짜",
+        from: "보낸사람",
+        to: "받는사람",
+        subject: "제목",
+        size: "크기",
+      },
+      ListCount: {
+        Tooltip: "목록개수",
+      },
+      ViewSettings: {
+        Tooltip: "보기설정",
+        List: "메일 목록만 보기",
+        LeftRight: "좌우 분할로 보기",
+        TopBottom: "상하 분할로 보기",
+      },
+    },
+
+  }
+  // 콘텐츠 바디 메일 리스트
+  _.tmpl_content_body__mail_list = {
+    SelectToMail: "원하는 메일 제목을 클릭 하시면 메일 내용을 볼 수 있습니다.",
+
+    From: "보낸사람",
+    To: "받는사람",
+  }
+  // 콘텐츠 바디 리스트 메일 리스트
+  _.tmpl_content_body_list__mail_list = {
+    Colunms: {
+      From: "보낸사람",
+      To: "받는사람",
+      Subject: "제목",
+      Date: "날짜",
+      Size: "크기",
+    },
+    To_Others: "외 {{:%s}}명",
+    NoMail: "메일함에 메일이 없습니다."
+  }
+  _.tmpl_content_body_list__mail_list_body = {
+    To_Others: "외 {{:%s}}명",
+    NoMail: "메일함에 메일이 없습니다."
+  }
+  // 콘텐츠 헤더 : 메일 리스트 수신확인
+  _.tmpl_content_head__mail_list_receiveconfirm = {
+    Refresh: { Tooltip: "새로고침" },
+    Notice: "※ 수신확인 정보는 최근 3개월까지만 조회됩니다.",
+    Search: {
+      Tooltip: "검색",
+      TooltipAdvanced: "상세검색",
+
+      subject: "제목",
+      body: "본문",
+      from: "보낸사람",
+      to: "받는사람",
+      Placeholder: "검색어 입력",
+
+
+      MailFolder: "메일함",
+
+      Term: "기간",
+
+      all: "전체",
+      yesterday: "어제",
+      m7d: "1주일",
+      m1m: "1개월",
+      m3m: "3개월",
+      m6m: "6개월",
+      m1y: "1년",
+      custom: "직접입력",
+
+      TooltipReset: "재설정",
+    },
+    Functions: {
+      Delete: {
+        Tooltip: "삭제",
+        Trash: "휴지통으로 이동",
+        Forever: "완전삭제",
+      },
+    },
+    Options: {
+      ListCount: {
+        Tooltip: "목록개수",
+      },
+    },
+  }
+
+  // 콘텐츠 헤더 메일 뷰
+  _.tmpl_content_head__mail_view = {
+    Functions: {
+      ToList: { Tooltip: "목록으로", },
+      Resend: { Tooltip: "다시보내기", },
+      Delete: {
+        Tooltip: "삭제",
+        Trash: "휴지통으로 이동",
+        Forever: "완전삭제",
+      },
+      Reply: { Tooltip: "답장" },
+      ReplyAll: { Tooltip: "전체답장" },
+      Relay: { Tooltip: "전달" },
+      Move: {
+        Tooltip: "이동",
+        TooltipAppend: "추가",
+        TooltipMove: "이동",
+        TooltipMgr: "관리",
+      },
+      Labels: {
+        Tooltip: "라벨",
+        TooltipApply: "적용",
+        TooltipCreate: "만들기",
+        TooltipMgr: "관리",
+      },
+      More: {
+        Tooltip: "더보기",
+        SeenAll: "모두 읽은 상태로 표시",
+        Explication: "추가작업을 보려면 메일 선택",
+        Seen: "읽은 상태로 표시",
+        Unseen: "읽지 않은 상태로 표시",
+        RemoveLabel: "라벨 삭제",
+        Print: "인쇄하기",
+        Save: "저장하기",
+        Raw: "원문보기",
+      },
+    },
+    Options: {
+      Prev: { Tooltip: "이전", },
+      Next: { Tooltip: "다음", },
+      Print: { Tooltip: "인쇄", },
+      ViewNewWindow: { Tooltip: "새창으로 보기", },
+    },
+
+  }
+  // 콘텐츠 바디 메일 뷰
+  _.tmpl_content_body__mail_view = {
+    From: "보낸사람",
+    To: "받는사람",
+    To_Others: "외 {{:%s}}명",
+    Cc: "참조",
+    Bcc: "숨은참조",
+    Attachments: "첨부파일 <em>{{:%s}}개</em>",
+    SaveAll: "모두저장",
+    PreviewImage: "이미지 미리보기",
+    PreviewImage_Explanation: "<em>{{:%s}}개</em>의 이미지가 있습니다.",
+  }
+
+  // 콘텐츠 바디 분할보기 : 메일 뷰
+  _.tmpl_content_body_split__mail_view_empty = {
+    Explanation: "원하는 메일 제목을 클릭 하시면 메일 내용을 볼 수 있습니다.",
+  }
+
+  // 콘텐츠 헤더 : 메일 쓰기
+  _.tmpl_content_head__mail_compose = {
+    Functions: {
+      Send: { Tooltip: "보내기", },
+      SendLargeCapacity: { Tooltip: "대용량 발송", },
+      SaveTemporary: { Tooltip: "임시저장", },
+    },
+    Options: {
+      FoldingUpDown: { Tooltip: "메일상단 접기/펼치기", },
+      NewWindow: { Tooltip: "새창으로 쓰기", },
+    },
+  }
+  // 콘텐츠 바디 : 메일 쓰기
+  _.tmpl_content_body__mail_compose = {
+    To: "받는사람",
+    Address_Placeholder: "주소입력",
+    AddressBook: "주소록",
+    Cc: "참조",
+    Bcc: "숨은참조",
+    From: "보내는사람",
+    From_Placeholder: "이름입력",
+    Subject: "제목",
+    Attachments: "파일첨부",
+    MyPc: "내 PC",
+    DeleteAll: "모두삭제",
+    AttachedCapacity_Explanation: "파일 <strong>{{:%s}}</strong>개 까지 첨부가능, 첨부용량 <strong>{{:%s}}</strong> 미만",
+    DragFiles_Explanation: "마우스로 파일을 끌어오세요.",
+    RecentlyUsedAddress: "최근 사용한 주소",
+    Favorites: "즐겨찾기",
+    Me: "나에게도 발송",
+    Individual: "개별발송",
+    Important: "중요<strong>!</strong>",
+    SaveToSent: "보낸메일함에 저장",
+    NotificationReceipt: "수신확인",
+    Reservation: "예약발송",
+    Signature: "서명",
+    NoSignature: "서명없음",
+  }
+  _.tmpl_layer_dialog_uploadAttachments = {
+    FullTransfer: "전체 전송",
+    TransferFiles: "전송 파일",
+    TransmissionSpeed: "전송 속도",
+    TransmissionCapacity: "전송 용량",
+    TransmissionTime: "전송 시간",
+    FileList: "파일 리스트",
+  }
+  // 콘텐츠 바디 : 메일 쓰기 답장, 전체답장, 전달 바디
+  _.tmpl_content_body_rebody__mail_compose = {
+    OriginalMail: "원본 메일",
+    From: "보낸사람",
+    To: "받는사람",
+    Cc: "참조",
+    Date: "날짜",
+    Subject: "제목",
+  }
+  // 콘텐츠 바디 : 메일 쓰기완료
+  _.tmpl_content_body__mail_composecomplete = {
+    SuccessfullyDelivered: "메일이 정상적으로 전송되었습니다.",
+    SavedInTheReservationMailbox: "예약메일함에 저장되었습니다.",
+    SuccessfullyTemporary: "작성하신 메일이 임시 저장되었습니다.",
+    Subject: "제목",
+    To: "받는사람",
+    Cc: "참조",
+    Bcc: "숨은참조",
+    GoToInbox: "받은메일함으로 가기",
+    Nmae_Placeholder: "이름입력",
+    Name_Explanation: "이름을 입력하면 주소록 자동완성으로 편하게 연락처를 찾을 수 있습니다.",
+    SaveToAddressBook: "주소록에 저장",
+  }
+
+
+
+  // 콘텐츠 헤더 : 환경설정(네비메뉴)
+  _.tmpl_content_head__mail_settings = {
+    Title: "환경설정",
+    Personal: "개인환경",
+    Folder: "메일함관리",
+    Filter: "자동분류",
+    Signature: "서명",
+    Externalmail: "외부메일",
+    Absence: "부재중응답",
+    Receivemngt: "수신관리",
+    Forwarding: "포워딩",
+    Mailupload: "메일업로드",
+  }
+  // 콘텐츠 바디 메뉴 : 환경설정 개인환경
+  _.tmpl_content_body_menu__mail_settings_personal = {
+    MailRead: "메일읽기",
+    MailWrite: "메일쓰기",
+  }
+  // 콘텐츠 바디 : 환경설정 개인환경 메일읽기
+  _.tmpl_content_body__mail_settings_personal_mailread = {
+    MainMenu: "주 메뉴",
+    ListType: "목록 화면",
+    ListType_List: "기본",
+    ListType_LeftRight: "좌우 분할",
+    ListType_TopBottom: "상하 분할",
+
+    ListRows: "목록 개수",
+    NewWindow: "새 창으로 메일 읽기",
+    NewWindow_Hint: "기본 목록 화면에서만 적용됩니다.",
+    Link: "링크 사용",
+    Link_Hint: "메일 내용의 링크를 누르면 새창을 열어 보여줍니다.",
+    AttachedImages: "첨부이미지",
+    AttachedImages_Hint: "첨부파일이 이미지일 경우 메일내용 아래(이미지 미리보기)에 보여줍니다.",
+    ExpandMyMailbox: "내 메일함 펼침",
+    ExpandMyMailbox_On: "전체펼침",
+    ExpandMyMailbox_Off: "전체숨김",
+    attachments: "첨부파일",
+    fold: "접기",
+    unfold: "펴기",
+
+    Used: "사용함",
+    NotUsed: "사용안함",
+    Save: "저장",
+    Cancel: "취소",
+  }
+
+  // 콘텐츠 헤더 메일 프린트
+  _.tmpl_content_head__mail_print = {
+  }
+  // 콘텐츠 바디 메일 프린트
+  _.tmpl_content_body__mail_print = {
+    From: "보낸사람",
+    To: "받는사람",
+    To_Others: "외 {{:%s}}명",
+    Cc: "참조",
+    Bcc: "숨은참조",
+    Attachments: "첨부파일 <em>{{:%s}}개</em>",
+    SaveAll: "모두저장",
+    PreviewImage: "이미지 미리보기",
+    PreviewImage_Explanation: "<em>{{:%s}}개</em>의 이미지가 있습니다.",
+  }
+/*
+<!---->{{:_extns.}}
+<!---->{{:~dic("words.")}}
+
+
+<!--사용함-->{{:_extns.Used}}
+<!--사용안함-->{{:_extns.NotUsed}}
+
+
+<!--저장-->{{:_extns.Save}}
+<!--취소-->{{:_extns.Cancel}}
+
+
+<!--펴기-->{{:_extns.Expand}}
+<!--접기-->{{:_extns.Collapse}}
+
+
+<!--포함-->{{:_extns.Include}}
+<!--포함하지 않음-->{{:_extns.NotInclude}}
+
+
+<!--초-->{{:_extns.Seconds}}
+<!--분-->{{:_extns.Minutes}}
+
+
+<!--저장--><button type="button" class="button focus" title="{{:_extns.Save}}"><i class="icon-check-completion"></i></button>
+<!--취소--><button type="button" class="button" title="{{:_extns.Cancel}}"><i class="icon-close"></i></button>
+<!--저장--><button type="button" class="button focus d-save" title="{{:~dic('words.Save')}}"><i class="icon-check-completion"></i></button>
+<!--취소--><button type="button" class="button d-cancel" title="{{:~dic('words.Cancel')}}"><i class="icon-close"></i></button>
+
+{{include ~extns=~getExtension("") tmpl="#tmpl_content_body__mail_settings_folder_label__area_view"/}}
+{{:~setvar("extns", _extns)}}
+
+<!---->{{:~extns.}}
+<!---->{{:~dic("words.")}}
+
+
+<!---->{{:_extns.}}
+<!---->{{:~dic("words.")}}
+<!---->{{:~dic('words.')}}
+
+
+<!---->{{:_extns.}}
+<!---->{{:~dic("words.")}}
+
+
+<!--사용함-->{{:~dic("words.Used")}}
+<!--사용안함-->{{:~dic("words.NotUsed")}}
+
+
+<!--저장-->{{:_extns.Save}}
+<!--취소-->{{:_extns.Cancel}}
+
+
+<!--펴기-->{{:_extns.Expand}}
+<!--접기-->{{:_extns.Collapse}}
+
+
+<!--포함-->{{:_extns.Include}}
+<!--포함하지 않음-->{{:_extns.NotInclude}}
+
+
+<!--초-->{{:_extns.Seconds}}
+<!--분-->{{:_extns.Minutes}}
+
+
+<!--저장--><button type="button" class="button focus d-save" title="{{:~dic('words.Save')}}"><i class="icon-check-completion"></i></button>
+<!--취소--><button type="button" class="button d-cancel" title="{{:~dic('words.Cancel')}}"><i class="icon-close"></i></button>
+
+
+
+<!---->{{:~format(~extns., )}}
+{{:~format(~extns., )}}
+
+
+<!---->{{:~format(_extns., )}}
+{{:~format(_extns., )}}
+*/
+  // 콘텐츠 바디 메뉴 : 환경설정 메일함관리
+  _.tmpl_content_body_menu__mail_settings_folder = {
+    DefaultMailbox: "기본메일함",
+    MyMailbox: "내 메일함",
+    Label: "라벨",
+  }
+  // 콘텐츠 바디 : 환경설정 개인환경 메일쓰기
+  _.tmpl_content_body__mail_settings_personal_mailwrite = {
+    SenderAddress: "보내는사람 메일주소",
+    NewWindow: "새 창으로 메일 쓰기",
+    SenderBcc: "보낸사람/숨은참조",
+    SaveToSent: "보낸메일함에 저장",
+    OriginalInReply: "답장 시 원본 메시지",
+    OriginalInAttach: "답장 시 파일첨부",
+    RecentlyUsedAddress: "최근에 사용한 주소",
+    Signature: "서명",
+    Signature_WriteInclude: "편지쓰기 할 때 기본서명을 포함합니다.",
+    Signature_ReplyRelayInclude: "답장/전달시 기본서명을 포함합니다.",
+    AutoSave: "자동저장",
+
+    Expand: "펴기",
+    Collapse: "접기",
+    Used: "사용함",
+    NotUsed: "사용안함",
+    Include: "포함",
+    NotInclude: "포함하지 않음",
+
+    Seconds: "초",
+    Minutes: "분",
+
+    Save: "저장",
+    Cancel: "취소",
+  }
+  // 콘텐츠 바디 : 환경설정 메일함관리 기본메일함
+  _.tmpl_content_body__mail_settings_folder_default = {
+    MailBox: "메일함",
+    Capacity: "용량",
+    UnreadMail: "읽지않은 메일",
+    NumberOfMail: "메일수",
+    Management: "관리",
+    Empty: "비우기",
+    Backup: "백업",
+    ReadAll: "모두읽음",
+  }
+  // 콘텐츠 바디 : 환경설정 메일함관리 내 메일함
+  _.tmpl_content_body__mail_settings_folder_personal = {
+    Explanation: "선택한 폴더 하위에 신규 폴더 혹은 메일함을 생성할 수 있습니다.<br> 폴더 혹은 메일함을 추가할 경우에는 상위 폴더를 먼저 선택한 후에 폴더 [추가] 혹은 메일함 [추가] 버튼을 클릭하세요.<br> 선택한 폴더 혹은 메일함을 수정, 삭제 및 다른 폴더 하위로 이동할 수 있습니다.<br> 선택한 폴더 하위에 속한 폴더 혹은 메일함들의 상.하 위치를 변경할 수 있습니다.<br>폴더 및 메일함 이름은 영어 대소문자, 숫자(0-9), 한글, _(언더바), -(대시)만 사용할 수 있습니다.<br>",
+    AddFolder: "폴더추가",
+    AddMailbox: "메일함추가",
+    ChangeLocation: "위치변경",
+
+    Save: "저장",
+    Cancel: "취소",
+  }
+  // 콘텐츠 바디 : 환경설정 메일함관리 내 메일함 뷰영역
+  _.tmpl_content_body__mail_settings_folder_personal__area_view = {
+    Name: "이름",
+    NumberOfMail: "메일수",
+    Capacity: "용량",
+
+    Modify: "수정",
+    Delete: "삭제",
+    Empty: "비우기",
+    Backup: "백업",
+    Save: "저장",
+    Cancel: "취소",
+  }
+  // 콘텐츠 바디 : 환경설정 메일함관리 메일라벨
+  _.tmpl_content_body__mail_settings_folder_label = {
+    Explanation: "라벨 이름은 영어 대소문자, 숫자(0-9), 한글, _(언더바), -(대시)만 사용할 수 있습니다.<br>",
+
+    AddLabel: "라벨추가",
+    ChangeLocation: "위치변경",
+
+    Save: "저장",
+    Cancel: "취소",
+
+  }
+  // 콘텐츠 바디 : 환경설정 메일함관리 메일라벨 뷰영역
+  _.tmpl_content_body__mail_settings_folder_label__area_view = {
+    Name: "이름",
+    Color: "색상",
+    NumberOfMail: "메일수",
+    Modify: "수정",
+    Delete: "삭제",
+    Empty: "비우기",
+    Backup: "백업",
+    Save: "저장",
+    Cancel: "취소",
+  }
+
+  // 콘텐츠 바디 : 환경설정 자동분류
+  _.tmpl_content_body__mail_settings_filter = {
+    AutomaticClassification: "자동분류",
+    List: "목록",
+    Item: "항목",
+    CreatedDate: "만든날짜",
+    Management: "관리",
+  }
+  // 콘텐츠 바디 : 환경설정 자동분류 아이템
+  _.tmpl_content_body__mail_settings_filter_item = {
+    IfNoTitle: "제목이 없는 경우 <em>{{:%s}}</em> (으)로 이동",
+    IfAlphanumericTitle: "제목이 영문, 숫자인 경우 <em>{{:%s}}</em>(으)로 이동",
+    IfTitle: "제목이 <em>{{:%s}}</em> 경우 <em>{{:%s}}</em>(으)로 이동",
+    IfSendingAddress: "발신주소가 <em>{{:%s}}</em>인 경우 <em>{{:%s}}</em>(으)로 이동",
+    IfRecipientAddress: "수신주소가 <em>{{:%s}}</em>인 경우 <em>{{:%s}}</em>(으)로 이동",
+    IfSendingDomain: "발신도메인이 <em>{{:%s}}</em>인 경우 <em>{{:%s}}</em>(으)로 이동",
+  }
+  // 다이얼로그: 환경설정 자동분류 아이템 추가
+  _.tmpl_layer_dialog__mail_settings_filter_item_appendOrModify = {
+    Explanation: [
+      "수신주소나 발송주소, 발송도메인은 대소문자를 구분하지 않습니다.",
+      "여러조건을 세미콜론(;)으로 구분하여 한꺼번에 등록할 수 있습니다.",
+    ],
+    AutomatedSegmentation: "자동분류 기준",
+    ApplyMailbox: "다음 메일함에 이동",
+
+    IfNoTitle: "제목이 없는 경우",
+    IfAlphanumericTitle: "제목이 영문, 숫자인 경우",
+    IfTitle_Prev: "제목에",
+    IfTitle_Next: "포함인 경우",
+    IfSendingAddress_Prev: "발신주소가",
+    IfSendingAddress_Next: "인 경우",
+    IfRecipientAddress_Prev: "수신주소가",
+    IfRecipientAddress_Next: "인 경우",
+    IfSendingDomain_Prev: "발신도메인이",
+    IfSendingDomain_Next: "인 경우",
+
+  }
+  // 콘텐츠 바디 메뉴 : 환경설정 서명
+  _.tmpl_content_body_menu__mail_settings_signature = {
+    Personal: "개인서명",
+		Company: "전사서명",
+  }
+  // 콘텐츠 바디 : 환경설정 서명 개인서명
+  _.tmpl_content_body__mail_settings_signature_personal = {
+    Signature: "서명",
+    Signature_Explanation: "메일을 보낼 때 꼬리말처럼 메일 내용 끝에 항상 첨부되는 내용입니다.",
+    DefaultSignature: "기본 서명",
+    DefaultSignature_Explanation: "기본 서명으로 사용할 서명을 선택하세요",
+    Subject: "제목",
+  }
+  // 콘텐츠 바디 : 환경설정 서명 전사서명
+  _.tmpl_content_body__mail_settings_signature_company = {
+    Signature: "서명",
+    Signature_Explanation: "편지발송시 편지내용 다음이나 사용자 서명 다음에 첨부됩니다.",
+    Subject: "제목",
+  }
+  // 콘텐츠 바디 : 환경설정 외부메일
+  _.tmpl_content_body__mail_settings_externalmail = {
+    ExternalMailList: "외부메일 목록",
+    Name: "이름",
+    ExternalMailServer: "외부메일 서버",
+    Id: "아이디",
+    SavedMailbox: "저장 메일함",
+    Management: "관리",
+  }
+  // 다이얼로그: 환경설정 외부메일 아이템 추가
+  _.tmpl_layer_dialog__mail_settings_externalmail_item_appendOrModify = {
+    Name: "이름",
+    Name_Explanation: "한글 20자, 영문 40자, 영어 대소문자, 한글, 숫자만 사용할 수 있습니다.",
+    ExternalMailServer: "외부메일 서버",
+    Id: "아이디",
+    Password: "비밀번호",
+    Pop3Port: "POP3 포트",
+    Pop3Port_Explanation: "POP3 기본 포트는 110번 입니다.",
+    SavedMailbox: "저장 메일함",
+    LeaveCopyOnServer: "서버에 복사본 남김",
+  }
+  // 콘텐츠 바디 : 환경설정 부재중응답
+  _.tmpl_content_body__mail_settings_absence = {
+    UseOutOfOfficeResponse: "부재중 응답 사용",
+    UseOutOfOfficeResponse_Explanation: "부재중에 메일을 보낸 사람에게 자동으로 답장을 보냅니다.",
+    Period: "기간",
+    Contents: "내용",
+  }
+
+  // 콘텐츠 바디 메뉴 : 환경설정 수신관리
+  _.tmpl_content_body_menu__mail_settings_receivemngt = {
+    Allow: "수신허용",
+    Deny: "수신거부",
+  }
+  // 콘텐츠 바디 : 환경설정 수신허용
+  _.tmpl_content_body__mail_settings_receivemngt_writelist = {
+    Explanation: "수신허용 목록은 수신거부목록보다 먼저 참조됩니다. 같은 메일주소 또는 도메인이 수신허용 목록과 수신거부 목록에 동시에 등록되어 있을 경우 수신허용됩니다.<br>수신허용을 [사용함]으로, 수신거부를 [사용안함]으로 설정할 경우 수신허용 목록에 존재하는 메일주소 또는 도메인에 대해서만 메일이 수신됩니다.",
+    Allow: "수신허용",
+    AllowList: "수신허용 목록",
+    AllowList_Placeholder: "메일주소 또는 @도메인 입력",
+    Search_Placeholder: "검색어 입력",
+  }
+  // 콘텐츠 바디 : 환경설정 수신거부
+  _.tmpl_content_body__mail_settings_receivemngt_blacklist = {
+    Explanation: "원하지 않는 메일을 받지 않도록 메일주소나 도메인을 추가하여 수신을 차단합니다.<br>수신차단 목록은 최대 200개까지 등록될 수 있습니다.",
+    Deny: "수신거부",
+    DenyMailProcess: "수신 거부된 메일 처리",
+    DenyMailProcess_Delete: "즉시삭제",
+    DenyMailProcess_SaveToTrash: "휴지통에 저장",
+    DenyMailProcess_SaveToSpam: "스팸메일함에 저장",
+    DenyList: "수신거부 목록",
+    DenyList_Placeholder: "메일주소 또는 @도메인 입력",
+    Search_Placeholder: "검색어 입력",
+  }
+
+  // 콘텐츠 바디 : 환경설정 포워딩
+  _.tmpl_content_body__mail_settings_forwarding = {
+    Explanation: "수신한 메일을 포워딩 조건에 따라 등록한 포워딩 메일 주소로 전달합니다.",
+    IsUse: "사용여부",
+    SaveCopyOnServer: "서버에 복사본 저장",
+    ForwardingList: "포워딩 목록",
+    EmailAddress: "메일주소",
+    ProcessingMethod: "처리방법",
+    Period: "기간",
+    Management: "관리",
+  }
+  // 콘텐츠 바디 : 환경설정 포워딩 아이템
+  _.tmpl_content_body__mail_settings_forwarding_item = {
+    ForwardAll: "모든메일 전달",
+    ForwardSendAddress: "발송주소가 {{:%s}} 인 경우만 전달",
+    ForwardShippingDomain: "발송도메인이 {{:%s}} 인 경우만 전달",
+    ForwardTitle: "제목에 {{:%s}} 이(가) 포함되어 있을 경우 전달",
+  }
+  // 다이얼로그: 환경설정 포워딩 아이템 추가
+  _.tmpl_layer_dialog__mail_settings_forwarding_item_appendOrModify = {
+    Explanation: "발송주소나 발송도메인은 대소문자를 구분하지 않습니다.",
+    MailAddress: "메일주소",
+    ProcessingMethod: "처리방법",
+    ForwardAll: "모든메일 전달",
+    ForwardSendAddress_Prev: "발송주소가",
+    ForwardSendAddress_Next: "인 경우만 전달",
+    ForwardShippingDomain_Prev: "발송도메인이",
+    ForwardShippingDomain_Next: "인 경우만 전달",
+    ForwardTitle_Prev: "제목이",
+    ForwardTitle_Next: "포함되어 있을 경우 전달",
+    Period: "기간",
+    NoPeriodLimit: "기간제한 없음",
+    PeriodInput: "기간입력",
+  }
+
+  // 콘텐츠 바디 : 환경설정 메일업로드
+  _.tmpl_content_body__mail_settings_mailupload = {
+    Explanation: "eml 형태의 메일과 eml을 zip 형태로 압축한 파일을 편지함으로 업로드할 수 있습니다.<br> 정상적인 메일만 업로드되며, 업로드 크기에 따라 다소 시간이 걸릴 수 있습니다.",
+    SaveMailbox: "저장 메일함",
+    UploadFile: "업로드파일",
+    MyPc: "내 PC",
+    DeleteAll: "모두삭제",
+    AttachedCapacity: "첨부용량",
+    DragFiles_Explanation: "마우스로 파일을 끌어오세요.",
+  }
+
+  // 콘텐츠 바디 : 환경설정 주소록
+  _.tmpl_content_body__mail_settings_addressbook = {
+    addressbookList: "연락처 목록",
+    searchPlaceholder: "검색어 입력",
+    searchTooltip: "검색",
+    colunms: {
+      name: "이름",
+      companyName: "회사명",
+      email: "이메일",
+      management: "관리",
+    },
+  }
+  // 다이얼로그: 환경설정 주소록 아이템 추가
+  _.tmpl_layer_dialog__mail_settings_addressbook_item_appendOrModify = {
+    name: "이름",
+    companyName: "회사명",
+    email: "이메일",
+  }
+
+  // 환경설정/메일함관리/기본메일함
+  _.tmpl_layer_dialog_backupFolder = {
+    title: "{{:%s}} 백업",
+    messages: [
+      "편지 백업은 메일함의 편지수에 따라 소요시간의 차이가 있습니다.",
+      "200MB 단위로 백업할 수 있습니다.",
+    ],
+    Period: {
+      all: "전체",
+      m7d: "1주일",
+      m1m: "1개월",
+      m3m: "3개월",
+      m6m: "6개월",
+      custom: "직접입력",
+    },
+    buttons: [
+      { text: "확인", tooltip: "확인", icon: "icon-check-completion", class: "focus" },
+      { text: "취소", tooltip: "취소", icon: "icon-ban", code: "mbClose" }
+    ]
+  }
+
+  _.tmpl_layer_dialog_addressbook_mailonly = {
+    addressbook: "주소록",
+    addressbookPlaceholder: "연락처 검색",
+    to: "받는사람",
+    cc: "참조",
+    bcc: "숨은참조",
+  }
+
+  // 수신확인 리스트
+  _.tmpl_content_body_List__mail_list_receiveconfirm = {
+    outOfRead: "{{:%d}}명 중 {{:%d}}명 읽음"
+  };
+  // 수신확인 리스트 아이템
+  _.tmpl_content_body_List__mail_list_receiveconfirm_item = {
+    outOfRead: "{{:%d}}명 중 {{:%d}}명 읽음"
+  };
+  _.tmpl_layer_dialog_receiveconfirm = {
+    rcpt: "받는사람",
+    state: "수신상태",
+    unseen: "읽지않음",
+    cancelSending: "발송취소",
+  };
+
+  // 콘텐츠 헤더 : 메일 리스트 외부발송보안
+  _.tmpl_content_head__mail_list_externalSendSecurity = {
+    Refresh: { Tooltip: "새로고침" },
+    description: "메일발송 요청건에 대해 승인 또는 반려 할 수 있습니다.<br>해당 목록은 최근 15일 까지만 노출되며, 기간이 지난 목록은 자동 삭제됩니다.",
+    Search: {
+      Tooltip: "검색",
+      TooltipAdvanced: "상세검색",
+
+      subject: "제목",
+      body: "본문",
+      from: "보낸사람",
+      to: "받는사람",
+      Placeholder: "검색어 입력",
+
+
+      MailFolder: "메일함",
+
+      Term: "기간",
+
+      all: "전체",
+      yesterday: "어제",
+      m7d: "1주일",
+      m1m: "1개월",
+      m3m: "3개월",
+      m6m: "6개월",
+      m1y: "1년",
+      custom: "직접입력",
+
+      TooltipReset: "재설정",
+    },
+    Functions: {
+      Delete: {
+        Tooltip: "삭제",
+        Trash: "휴지통으로 이동",
+        Forever: "완전삭제",
+      },
+    },
+    Options: {
+      ListCount: {
+        Tooltip: "목록개수",
+      },
+    },
+  }
+
+  // 콘텐츠 바디 : 메일 리스트 외부발송보안
+  _.tmpl_content_body_list__mail_list_externalSendSecurity = {
+    Colunms: {
+      From: "보낸사람",
+      To: "받는사람",
+      Subject: "제목",
+      Date: "날짜",
+      Size: "크기",
+    },
+    To_Others: "외 {{:%s}}명",
+    NoMail: "메일함에 메일이 없습니다."
+  }
+
+
+})(this._app.locale.extension);

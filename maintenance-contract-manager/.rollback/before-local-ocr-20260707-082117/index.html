@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>유지보수 및 업체 계약관리</title>
+  <link rel="stylesheet" href="styles.css?v=20260707-0830">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M4 6.5 12 2l8 4.5v9L12 20l-8-4.5v-9Z"/><path d="M8 8.5 12 6l4 2.5v5L12 16l-4-2.5v-5Z"/></svg>
+        </div>
+        <div>
+          <strong>계약관리</strong>
+          <span>Maintenance CRM</span>
+        </div>
+      </div>
+      <nav class="nav" aria-label="주 메뉴">
+        <button class="nav-item active" data-view="dashboard">
+          <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10Zm0 8h8v-6H3v6Zm10 0h8V11h-8v10Zm0-18v6h8V3h-8Z"/></svg>
+          대시보드
+        </button>
+        <button class="nav-item" data-view="companies">
+          <svg viewBox="0 0 24 24"><path d="M4 21V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v16"/><path d="M2 21h20M8 7h2M8 11h2M8 15h2M14 7h1M14 11h1M14 15h1"/></svg>
+          업체 관리
+        </button>
+        <button class="nav-item" data-view="contracts">
+          <svg viewBox="0 0 24 24"><path d="M7 3h8l4 4v14H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/><path d="M14 3v5h5M8 13h8M8 17h6"/></svg>
+          계약 관리
+        </button>
+        <button class="nav-item" data-view="worklogs">
+          <svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L4 17v3h3l5.3-5.3a4 4 0 0 0 5.4-5.4l-3 3-3-3 3-3Z"/></svg>
+          유지보수 이력
+        </button>
+        <button class="nav-item" data-view="schedule">
+          <svg viewBox="0 0 24 24"><path d="M7 2v4M17 2v4M3 9h18M5 4h14a2 2 0 0 1 2 2v14H3V6a2 2 0 0 1 2-2Z"/><path d="M8 13h3v3H8z"/></svg>
+          일정/알림
+        </button>
+        <button class="nav-item" data-view="documents">
+          <svg viewBox="0 0 24 24"><path d="M4 5h7l2 2h7v12a2 2 0 0 1-2 2H4V5Z"/><path d="M4 9h16"/></svg>
+          문서함
+        </button>
+        <button class="nav-item" data-view="stats">
+          <svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+          통계
+        </button>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">유지보수 및 업체 계약관리</p>
+          <h1 id="viewTitle">대시보드</h1>
+        </div>
+        <div class="top-actions">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24"><path d="m21 21-4.3-4.3M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z"/></svg>
+            <input id="globalSearch" type="search" placeholder="업체, 계약, 담당자 검색">
+          </div>
+          <button class="icon-button" id="exportBtn" title="엑셀용 CSV 내보내기" aria-label="엑셀용 CSV 내보내기">
+            <svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+          </button>
+          <button class="primary-button" id="quickAddBtn">
+            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+            업체 등록
+          </button>
+        </div>
+      </header>
+
+      <section class="content" id="view"></section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop hidden" id="modalBackdrop">
+    <form class="modal" id="modalForm">
+      <div class="modal-header">
+        <h2 id="modalTitle">등록</h2>
+        <button type="button" class="icon-button" id="closeModalBtn" aria-label="닫기" title="닫기">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-footer">
+        <button type="button" class="secondary-button" id="deleteBtn">삭제</button>
+        <span class="spacer"></span>
+        <button type="button" class="ghost-button" id="cancelBtn">취소</button>
+        <button type="submit" class="primary-button">저장</button>
+      </div>
+    </form>
+  </div>
+
+  <script src="app.js?v=20260707-0835"></script>
+</body>
+</html>

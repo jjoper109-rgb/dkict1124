@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+psycopg[binary]
+python-multipart
+pillow
+pytesseract
+pymupdf

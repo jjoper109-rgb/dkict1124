@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>DK 품의서 자동화 설정</title>
+  <style>
+    body {
+      font-family: "Malgun Gothic", Arial, sans-serif;
+      margin: 24px;
+      max-width: 760px;
+      color: #1f2933;
+    }
+
+    h1 {
+      font-size: 22px;
+      margin: 0 0 18px;
+    }
+
+    fieldset {
+      border: 1px solid #ccd5df;
+      border-radius: 6px;
+      margin: 0 0 18px;
+      padding: 16px;
+    }
+
+    legend {
+      font-weight: 700;
+      padding: 0 6px;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      margin: 12px 0;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    input,
+    textarea,
+    select {
+      box-sizing: border-box;
+      width: 100%;
+      border: 1px solid #aeb9c4;
+      border-radius: 4px;
+      padding: 8px;
+      font: inherit;
+      font-weight: 400;
+    }
+
+    textarea {
+      min-height: 110px;
+      resize: vertical;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 400;
+    }
+
+    .check input {
+      width: auto;
+    }
+
+    button {
+      border: 0;
+      border-radius: 4px;
+      background: #14a69a;
+      color: white;
+      padding: 10px 14px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    #status {
+      margin-left: 12px;
+      color: #0f766e;
+      font-weight: 700;
+    }
+
+    .note {
+      color: #52616f;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+  </style>
+</head>
+<body>
+  <h1>DK 품의서 자동화 설정</h1>
+
+  <fieldset>
+    <legend>로그인</legend>
+    <div class="row">
+      <label>
+        사번
+        <input id="employeeNo" autocomplete="username">
+      </label>
+      <label>
+        비밀번호
+        <input id="password" type="password" autocomplete="current-password">
+      </label>
+    </div>
+    <label class="check">
+      <input id="autoLogin" type="checkbox">
+      로그인 화면에서 자동 로그인
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>품의서 내용</legend>
+    <label>
+      양식
+      <select id="formName">
+        <option>품의서</option>
+        <option>품의서(물품구매)</option>
+        <option>품의서(자산구매)</option>
+        <option>품의서(자재 폐기 · 배출)</option>
+      </select>
+    </label>
+    <label>
+      제목
+      <input id="title">
+    </label>
+    <div class="row">
+      <label>
+        품의금액
+        <input id="proposalAmount">
+      </label>
+      <label>
+        공급가액
+        <input id="supplyAmount">
+      </label>
+    </div>
+    <label>
+      지급처
+      <input id="payee">
+    </label>
+    <label>
+      본문
+      <textarea id="body"></textarea>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>동작</legend>
+    <label class="check">
+      <input id="autoSaveDraft" type="checkbox">
+      입력 후 임시보관까지 자동 실행
+    </label>
+    <p class="note">
+      결재상신은 자동으로 누르지 않습니다. 설정값이 비어 있으면 입력/임시보관 단계가 중단됩니다.
+    </p>
+  </fieldset>
+
+  <button id="save">저장</button>
+  <span id="status"></span>
+
+  <script src="options.js"></script>
+</body>
+</html>

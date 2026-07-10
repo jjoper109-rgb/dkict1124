@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>전산/통신 유지보수 관리 시스템</title>
+  <link rel="icon" href="assets/DK_logo.ico">
+  <link rel="stylesheet" href="styles.css?v=20260710-contract-org-scope1">
+</head>
+<body>
+  <section class="login-screen" id="loginScreen">
+    <div class="login-wrap">
+      <img src="assets/DK_logo_sidebar.png" alt="" class="login-logo">
+      <form class="login-card" id="loginForm">
+        <h1>전산/통신 유지보수 관리 시스템</h1>
+        <label for="loginUsername">아이디</label>
+        <input id="loginUsername" name="username" autocomplete="username" required>
+        <label for="loginPassword">비밀번호</label>
+        <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
+        <button type="submit" class="primary-button">로그인</button>
+        <p class="login-error" id="loginError"></p>
+      </form>
+    </div>
+  </section>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <button type="button" class="brand" data-brand-home aria-label="대시보드로 이동">
+        <span class="brand-mark" aria-hidden="true">
+          <img src="assets/DK_logo_sidebar.png" alt="">
+        </span>
+      </button>
+      <nav class="nav" aria-label="주 메뉴">
+        <button class="nav-item active" data-view="dashboard">
+          <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10Zm0 8h8v-6H3v6Zm10 0h8V11h-8v10Zm0-18v6h8V3h-8Z"/></svg>
+          대시보드
+        </button>
+        <button class="nav-item" data-view="companies">
+          <svg viewBox="0 0 24 24"><path d="M4 21V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v16"/><path d="M2 21h20M8 7h2M8 11h2M8 15h2M14 7h1M14 11h1M14 15h1"/></svg>
+          업체 관리
+        </button>
+        <button class="nav-item" data-view="contracts">
+          <svg viewBox="0 0 24 24"><path d="M7 3h8l4 4v14H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/><path d="M14 3v5h5M8 13h8M8 17h6"/></svg>
+          계약 관리
+        </button>
+        <button class="nav-item" data-view="worklogs">
+          <svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L4 17v3h3l5.3-5.3a4 4 0 0 0 5.4-5.4l-3 3-3-3 3-3Z"/></svg>
+          유지보수 이력
+        </button>
+        <button class="nav-item" data-view="schedule">
+          <svg viewBox="0 0 24 24"><path d="M7 2v4M17 2v4M3 9h18M5 4h14a2 2 0 0 1 2 2v14H3V6a2 2 0 0 1 2-2Z"/><path d="M8 13h3v3H8z"/></svg>
+          일정/알림
+        </button>
+        <button class="nav-item" data-view="documents">
+          <svg viewBox="0 0 24 24"><path d="M4 5h7l2 2h7v12a2 2 0 0 1-2 2H4V5Z"/><path d="M4 9h16"/></svg>
+          문서함
+        </button>
+        <button class="nav-item" data-view="stats">
+          <svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+          통계
+        </button>
+        <button class="nav-item" data-view="users">
+          <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          사용자 관리
+        </button>
+        <button class="nav-item" data-view="organizations">
+          <svg viewBox="0 0 24 24"><path d="M4 20h16M6 20V8h8v12M14 12h4v8M9 11h1M9 15h1"/></svg>
+          조직 관리
+        </button>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">사내 유지보수 및 계약관리</p>
+          <h1 id="viewTitle">대시보드</h1>
+        </div>
+        <button class="ghost-button" id="logoutBtn">로그아웃</button>
+      </header>
+
+      <section class="content" id="view"></section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop hidden" id="modalBackdrop">
+    <form class="modal" id="modalForm">
+      <div class="modal-header">
+        <h2 id="modalTitle">등록</h2>
+        <button type="button" class="icon-button" id="closeModalBtn" aria-label="닫기" title="닫기">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-footer">
+        <button type="button" class="secondary-button" id="deleteBtn">삭제</button>
+        <span class="spacer"></span>
+        <button type="button" class="ghost-button" id="cancelBtn">취소</button>
+        <button type="submit" class="primary-button">저장</button>
+      </div>
+    </form>
+  </div>
+
+  <script src="app.js?v=20260710-menu-rbac2"></script>
+</body>
+</html>

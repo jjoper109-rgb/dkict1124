@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "DK Approval Draft Automation",
+  "version": "0.1.0",
+  "description": "Automates DK groupware login, proposal form entry, and draft save.",
+  "permissions": ["storage"],
+  "host_permissions": ["http://gw.e-dk.co.kr/*"],
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["http://gw.e-dk.co.kr/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
+}
