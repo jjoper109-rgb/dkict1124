@@ -1,5 +1,6 @@
 import os
 import re
+import io
 import base64
 import hashlib
 import hmac
@@ -14,6 +15,7 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
 from time import time
+from urllib.parse import quote
 
 from organization_links import normalize_organization_pair, resolve_allowed_organization_ids
 
@@ -24,6 +26,8 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Font, PatternFill
 from psycopg.rows import dict_row
 
 
@@ -176,6 +180,9 @@ ROLE_PERMISSIONS = {
         "menu.pending.view",
         "menu.asset.view",
         "menu.worklog.view",
+        "menu.worklog.create",
+        "menu.worklog.update",
+        "menu.worklog.delete",
         "menu.document.view",
     },
     "team_member": {
@@ -189,6 +196,7 @@ ROLE_PERMISSIONS = {
         "menu.pending.view",
         "menu.asset.view",
         "menu.worklog.view",
+        "menu.worklog.create",
         "menu.document.view",
     },
 }
@@ -268,6 +276,32 @@ def fetch_all(table: str, order_by: str = "id") -> list[dict[str, Any]]:
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute(f"SELECT * FROM {table} ORDER BY {order_by}")
+            return [row_to_client(row) for row in cur.fetchall()]
+
+
+def fetch_worklogs(user: dict[str, Any]) -> list[dict[str, Any]]:
+    if user.get("role") in FULL_ACCESS_ROLES:
+        return fetch_all("work_logs", "work_date DESC, id DESC")
+    organization_ids = [parse_int(value) for value in get_allowed_contract_organization_ids(user)]
+    organization_ids = [value for value in organization_ids if value]
+    if not organization_ids:
+        return []
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT w.*
+                FROM work_logs w
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM app.contract_organizations co
+                    WHERE co.contract_id = w.contract_id
+                      AND co.organization_id = ANY(%s)
+                )
+                ORDER BY w.work_date DESC, w.id DESC
+                """,
+                (organization_ids,),
+            )
             return [row_to_client(row) for row in cur.fetchall()]
 
 
@@ -1205,6 +1239,129 @@ def ensure_admin_delete(request: Request) -> None:
         raise HTTPException(status_code=403, detail="삭제 권한이 없습니다.")
 
 
+def ensure_excel_import_admin(request: Request) -> dict[str, Any]:
+    user = current_user_full(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Excel 일괄 등록은 관리자만 사용할 수 있습니다.")
+    return user
+
+
+EXCEL_TEMPLATES = {
+    "companies": {
+        "filename": "업체_일괄등록_양식.xlsx",
+        "permission": "menu.company.view",
+        "headers": ["업체명", "사업자번호", "대표자", "주소", "담당자명", "담당자연락처", "담당자이메일", "비고"],
+        "guides": ["업체명은 필수입니다.", "기존 업체명 또는 사업자번호와 중복되면 등록되지 않습니다."],
+    },
+    "contracts": {
+        "filename": "계약_일괄등록_양식.xlsx",
+        "permission": "menu.contract.view",
+        "headers": ["업체사업자번호", "업체명", "계약명", "담당부서", "담당자아이디", "시작일", "종료일", "금액", "지급방법", "상태", "갱신일", "알림일수", "자동알림", "비고"],
+        "guides": ["날짜는 YYYY-MM-DD 형식으로 입력합니다.", "지급방법: 일시불, 3분할, 2분할, 월", "상태: 진행, 검토, 만료, 종료", "자동알림: 예 또는 아니오"],
+    },
+    "worklogs": {
+        "filename": "유지보수이력_일괄등록_양식.xlsx",
+        "permission": "menu.worklog.view",
+        "headers": ["업체사업자번호", "업체명", "계약명", "작업일", "작업구분", "처리상태", "처리자", "제목", "작업내용"],
+        "guides": ["작업일은 YYYY-MM-DD 형식으로 입력합니다.", "작업구분: 방문 점검, 원격지원, 장애 처리, 부품 교체, 정기점검", "처리상태: 접수, 처리중, 완료, 보류", "업체와 계약은 기존 등록 데이터와 일치해야 합니다."],
+    },
+}
+
+
+def excel_cell_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (datetime, date)):
+        return value.date().isoformat() if isinstance(value, datetime) else value.isoformat()
+    return str(value).strip()
+
+
+def decode_excel_upload(content: bytes) -> list[dict[str, str]]:
+    if not content:
+        raise HTTPException(status_code=400, detail="Excel 파일이 비어 있습니다.")
+    try:
+        workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        sheet = workbook["일괄등록"] if "일괄등록" in workbook.sheetnames else workbook.active
+        values = sheet.iter_rows(values_only=True)
+        header_row = next(values, None)
+        if not header_row:
+            raise HTTPException(status_code=400, detail="Excel 헤더를 확인해 주세요.")
+        headers = [excel_cell_text(value) for value in header_row]
+        rows = []
+        for cells in values:
+            row = {header: excel_cell_text(cells[index] if index < len(cells) else None) for index, header in enumerate(headers) if header}
+            if any(row.values()):
+                rows.append(row)
+        return rows
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="올바른 .xlsx 파일인지 확인해 주세요.") from exc
+
+
+def csv_company(row: dict[str, str]) -> dict[str, Any]:
+    return {
+        "name": row.get("업체명", ""),
+        "businessNo": row.get("사업자번호", ""),
+        "representative": row.get("대표자", ""),
+        "address": row.get("주소", ""),
+        "manager": row.get("담당자명", ""),
+        "phone": row.get("담당자연락처", ""),
+        "email": row.get("담당자이메일", ""),
+        "memo": row.get("비고", ""),
+    }
+
+
+def find_csv_company(row: dict[str, str], refs: dict[str, Any]) -> dict[str, Any] | None:
+    business_no = row.get("업체사업자번호", "") or row.get("사업자번호", "")
+    name = row.get("업체명", "")
+    return refs["companies_by_business_no"].get(business_no) if business_no else refs["companies_by_name"].get(name)
+
+
+def csv_contract(row: dict[str, str], refs: dict[str, Any]) -> dict[str, Any]:
+    company = find_csv_company(row, refs)
+    organization_name = row.get("담당부서", "")
+    manager_username = row.get("담당자아이디", "")
+    organization_id = refs["organizations_by_name"].get(organization_name)
+    manager = refs["users_by_username"].get(manager_username)
+    manager_user_id = manager and manager["id"]
+    billing_map = {"일시불": "once", "3분할": "split3", "2분할": "split2", "월": "monthly", "월납": "monthly"}
+    status_map = {"진행": "active", "검토": "pending", "만료": "expired", "종료": "closed"}
+    auto_alert = row.get("자동알림", "예").lower() not in {"아니오", "n", "no", "false", "0"}
+    return {
+        "companyId": company and company["id"],
+        "name": row.get("계약명", ""),
+        "organizationId": organization_id,
+        "managerUserId": manager_user_id,
+        "startDate": row.get("시작일", ""),
+        "endDate": row.get("종료일", ""),
+        "amount": row.get("금액", "0").replace(",", ""),
+        "billingCycle": billing_map.get(row.get("지급방법", ""), row.get("지급방법", "") or "once"),
+        "status": status_map.get(row.get("상태", ""), row.get("상태", "") or "active"),
+        "renewalDate": row.get("갱신일", ""),
+        "alertDays": row.get("알림일수", "60"),
+        "autoAlert": auto_alert,
+        "memo": row.get("비고", ""),
+    }
+
+
+def csv_worklog(row: dict[str, str], refs: dict[str, Any]) -> dict[str, Any]:
+    company = find_csv_company(row, refs)
+    contract = refs["contracts_by_company_name"].get((company["id"], row.get("계약명"))) if company else None
+    category_map = {"방문": "visit", "방문 점검": "visit", "원격": "remote", "원격지원": "remote", "장애": "incident", "장애 처리": "incident", "부품교체": "part", "부품 교체": "part", "정기점검": "regular"}
+    status_map = {"접수": "open", "처리중": "progress", "진행중": "progress", "완료": "done", "보류": "hold"}
+    return {
+        "companyId": company and company["id"],
+        "contractId": contract and contract["id"],
+        "date": row.get("작업일", ""),
+        "category": category_map.get(row.get("작업구분", ""), row.get("작업구분", "") or "visit"),
+        "status": status_map.get(row.get("처리상태", ""), row.get("처리상태", "") or "done"),
+        "worker": row.get("처리자", ""),
+        "title": row.get("제목", ""),
+        "content": row.get("작업내용", ""),
+    }
+
+
 def organization_for_payload(payload: dict[str, Any], user: dict[str, Any]) -> int | None:
     return parse_int(payload.get("organizationId")) or None
 
@@ -1307,6 +1464,48 @@ def ensure_document_access(document_id: int, request: Request) -> None:
 def ensure_item_company_access(table: str, item_id: int, request: Request) -> None:
     row = fetch_one(table, item_id)
     ensure_company_access(parse_int(row.get("companyId")), request)
+
+
+def ensure_worklog_access(item_id: int, request: Request) -> None:
+    user = current_user_full(request)
+    if user.get("role") in FULL_ACCESS_ROLES:
+        return
+    organization_ids = [parse_int(value) for value in get_allowed_contract_organization_ids(user)]
+    organization_ids = [value for value in organization_ids if value]
+    if not item_id or not organization_ids:
+        raise HTTPException(status_code=403, detail="유지보수 이력 조직 권한이 없습니다.")
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM work_logs w
+                JOIN app.contract_organizations co ON co.contract_id = w.contract_id
+                WHERE w.id = %s AND co.organization_id = ANY(%s)
+                """,
+                (item_id, organization_ids),
+            )
+            if not cur.fetchone():
+                raise HTTPException(status_code=403, detail="유지보수 이력 조직 권한이 없습니다.")
+
+
+def ensure_worklog_contract_access(payload: dict[str, Any], request: Request) -> None:
+    user = current_user_full(request)
+    if user.get("role") in FULL_ACCESS_ROLES:
+        return
+    contract_id = parse_int(payload.get("contractId"))
+    if not contract_id:
+        raise HTTPException(status_code=403, detail="관련 계약을 선택해 주세요.")
+    ensure_contract_access(contract_id, request)
+    company_id = parse_int(payload.get("companyId"))
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM contracts WHERE id = %s AND company_id = %s",
+                (contract_id, company_id),
+            )
+            if not cur.fetchone():
+                raise HTTPException(status_code=400, detail="관련 계약과 업체가 일치하지 않습니다.")
 
 
 def save_contract_organization(item_id: int, organization_id: int | None) -> None:
@@ -1875,7 +2074,7 @@ def bootstrap(request: Request) -> dict[str, Any]:
         "companies": fetch_companies(user),
         "contracts": fetch_contracts(user),
         "assets": fetch_all("maintenance_assets"),
-        "worklogs": fetch_all("work_logs", "work_date DESC, id DESC"),
+        "worklogs": fetch_worklogs(user),
         "pendingItems": fetch_pending_items(user),
         "documents": fetch_documents(user),
         "organizations": fetch_organizations(),
@@ -2328,6 +2527,7 @@ def asset_values(payload: dict[str, Any]) -> dict[str, Any]:
 def create_worklog(payload: dict[str, Any], request: Request) -> dict[str, Any]:
     ensure_permission(request, "menu.worklog.create")
     ensure_company_access(parse_int(payload.get("companyId")), request)
+    ensure_worklog_contract_access(payload, request)
     result = insert_row("work_logs", worklog_values(payload))
     write_audit_log(request, "create", "public.work_logs", result["id"], result.get("title") or "")
     return result
@@ -2336,8 +2536,9 @@ def create_worklog(payload: dict[str, Any], request: Request) -> dict[str, Any]:
 @app.put("/api/worklogs/{item_id}")
 def update_worklog(item_id: int, payload: dict[str, Any], request: Request) -> dict[str, Any]:
     ensure_permission(request, "menu.worklog.update")
-    ensure_item_company_access("work_logs", item_id, request)
+    ensure_worklog_access(item_id, request)
     ensure_company_access(parse_int(payload.get("companyId")), request)
+    ensure_worklog_contract_access(payload, request)
     result = update_row("work_logs", item_id, worklog_values(payload))
     write_audit_log(request, "update", "public.work_logs", item_id, result.get("title") or "")
     return result
@@ -2346,7 +2547,7 @@ def update_worklog(item_id: int, payload: dict[str, Any], request: Request) -> d
 @app.delete("/api/worklogs/{item_id}")
 def delete_worklog(item_id: int, request: Request) -> dict[str, bool]:
     ensure_permission(request, "menu.worklog.delete")
-    ensure_item_company_access("work_logs", item_id, request)
+    ensure_worklog_access(item_id, request)
     result = delete_row("work_logs", item_id)
     write_audit_log(request, "delete", "public.work_logs", item_id)
     return result
@@ -2364,6 +2565,256 @@ def worklog_values(payload: dict[str, Any]) -> dict[str, Any]:
         "title": payload.get("title"),
         "content": payload.get("content"),
     }
+
+
+def load_excel_import_refs() -> dict[str, Any]:
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name, business_no FROM companies")
+            companies = cur.fetchall()
+            cur.execute("SELECT id, name FROM app.organizations WHERE is_active = TRUE AND parent_id IS NOT NULL")
+            organizations = cur.fetchall()
+            cur.execute("SELECT id, username, display_name FROM app.app_users WHERE is_active = TRUE")
+            users = cur.fetchall()
+            cur.execute("SELECT id, company_id, name FROM contracts")
+            contracts = cur.fetchall()
+            cur.execute("SELECT contract_id, work_date, title FROM work_logs")
+            worklogs = cur.fetchall()
+    return {
+        "companies_by_name": {row["name"]: row for row in companies},
+        "companies_by_business_no": {row["business_no"]: row for row in companies if row.get("business_no")},
+        "company_names": {row["name"] for row in companies},
+        "company_business_nos": {row["business_no"] for row in companies if row.get("business_no")},
+        "organizations_by_name": {row["name"]: row["id"] for row in organizations},
+        "users_by_username": {row["username"]: row for row in users},
+        "contracts_by_company_name": {(row["company_id"], row["name"]): row for row in contracts},
+        "contract_keys": {(row["company_id"], row["name"]) for row in contracts},
+        "worklog_keys": {(row["contract_id"], str(row["work_date"]), row["title"]) for row in worklogs},
+    }
+
+
+def validate_excel_rows(kind: str, rows: list[dict[str, str]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    payloads: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    seen_company_names: set[str] = set()
+    seen_company_business_nos: set[str] = set()
+    refs = load_excel_import_refs()
+    for index, row in enumerate(rows, start=2):
+        row_errors: list[str] = []
+        payload: dict[str, Any]
+        if kind == "companies":
+            payload = csv_company(row)
+            if not payload["name"]:
+                row_errors.append("업체명은 필수입니다.")
+            key = (payload["businessNo"] or "", payload["name"])
+            if payload["name"] in refs["company_names"] or (payload["businessNo"] and payload["businessNo"] in refs["company_business_nos"]):
+                row_errors.append("이미 등록된 업체명 또는 사업자번호입니다.")
+            if payload["name"] in seen_company_names or (payload["businessNo"] and payload["businessNo"] in seen_company_business_nos):
+                row_errors.append("Excel 파일 안에 업체명 또는 사업자번호가 중복되어 있습니다.")
+            seen_company_names.add(payload["name"])
+            if payload["businessNo"]:
+                seen_company_business_nos.add(payload["businessNo"])
+        elif kind == "contracts":
+            payload = csv_contract(row, refs)
+            if not payload["companyId"]:
+                row_errors.append("업체를 찾을 수 없습니다.")
+            if not payload["name"]:
+                row_errors.append("계약명은 필수입니다.")
+            if not payload["organizationId"]:
+                row_errors.append("담당부서를 찾을 수 없습니다.")
+            if row.get("담당자아이디") and not payload["managerUserId"]:
+                row_errors.append("담당자 아이디를 찾을 수 없습니다.")
+            for field, label_text in (("startDate", "시작일"), ("endDate", "종료일")):
+                try:
+                    date.fromisoformat(str(payload[field]))
+                except ValueError:
+                    row_errors.append(f"{label_text}은 YYYY-MM-DD 형식이어야 합니다.")
+            try:
+                if date.fromisoformat(str(payload["endDate"])) < date.fromisoformat(str(payload["startDate"])):
+                    row_errors.append("종료일은 시작일보다 빠를 수 없습니다.")
+            except ValueError:
+                pass
+            if payload["billingCycle"] not in {"once", "split3", "split2", "monthly"}:
+                row_errors.append("지급방법은 일시불, 3분할, 2분할, 월 중 하나여야 합니다.")
+            if payload["status"] not in {"active", "pending", "expired", "closed"}:
+                row_errors.append("상태는 진행, 검토, 만료, 종료 중 하나여야 합니다.")
+            try:
+                int(str(payload["amount"] or "0"))
+                int(str(payload["alertDays"] or "60"))
+            except ValueError:
+                row_errors.append("금액과 알림일수는 숫자로 입력해야 합니다.")
+            if payload["renewalDate"]:
+                try:
+                    date.fromisoformat(str(payload["renewalDate"]))
+                except ValueError:
+                    row_errors.append("갱신일은 YYYY-MM-DD 형식이어야 합니다.")
+            key = (payload["companyId"], payload["name"])
+            if key in refs["contract_keys"]:
+                row_errors.append("동일 업체에 같은 계약명이 이미 등록되어 있습니다.")
+        else:
+            payload = csv_worklog(row, refs)
+            if not payload["companyId"]:
+                row_errors.append("업체를 찾을 수 없습니다.")
+            if not payload["contractId"]:
+                row_errors.append("해당 업체의 계약을 찾을 수 없습니다.")
+            if not payload["title"]:
+                row_errors.append("제목은 필수입니다.")
+            try:
+                date.fromisoformat(str(payload["date"]))
+            except ValueError:
+                row_errors.append("작업일은 YYYY-MM-DD 형식이어야 합니다.")
+            if payload["category"] not in {"visit", "remote", "incident", "part", "regular"}:
+                row_errors.append("작업구분 값을 확인해 주세요.")
+            if payload["status"] not in {"open", "progress", "done", "hold"}:
+                row_errors.append("처리상태 값을 확인해 주세요.")
+            key = (payload["contractId"], payload["date"], payload["title"])
+            if key in refs["worklog_keys"]:
+                row_errors.append("같은 계약·작업일·제목의 이력이 이미 등록되어 있습니다.")
+        if key in seen:
+            row_errors.append("Excel 파일 안에 중복된 행이 있습니다.")
+        seen.add(key)
+        if row_errors:
+            errors.append({"row": index, "messages": row_errors})
+        payloads.append(payload)
+    return payloads, errors
+
+
+def insert_excel_rows(kind: str, payloads: list[dict[str, Any]]) -> int:
+    with db() as conn:
+        with conn.cursor() as cur:
+            if kind == "companies":
+                for payload in payloads:
+                    cur.execute(
+                        """
+                        INSERT INTO companies (name, business_no, address, manager, phone, email, memo)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                        """,
+                        (payload["name"], payload["businessNo"] or None, payload["address"], payload["manager"], payload["phone"], payload["email"], payload["memo"]),
+                    )
+                    company_id = cur.fetchone()["id"]
+                    cur.execute(
+                        "INSERT INTO app.company_profiles (company_id, representative, updated_at) VALUES (%s, %s, now())",
+                        (company_id, payload["representative"]),
+                    )
+                    if payload["manager"]:
+                        cur.execute(
+                            """
+                            INSERT INTO app.company_contacts
+                                (company_id, name, phone, email, is_primary, updated_at)
+                            VALUES (%s, %s, %s, %s, TRUE, now())
+                            """,
+                            (company_id, payload["manager"], payload["phone"], payload["email"]),
+                        )
+            elif kind == "contracts":
+                cur.execute("SELECT id, username, display_name FROM app.app_users WHERE is_active = TRUE")
+                manager_names = {
+                    row["id"]: (row.get("display_name") or row["username"])
+                    for row in cur.fetchall()
+                }
+                for payload in payloads:
+                    values = contract_values(payload)
+                    cur.execute(
+                        """
+                        INSERT INTO contracts
+                            (company_id, name, start_date, end_date, amount, billing_cycle, status,
+                             renewal_date, alert_days, auto_alert, memo)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                        """,
+                        tuple(values[key] for key in (
+                            "company_id", "name", "start_date", "end_date", "amount", "billing_cycle",
+                            "status", "renewal_date", "alert_days", "auto_alert", "memo"
+                        )),
+                    )
+                    contract_id = cur.fetchone()["id"]
+                    cur.execute(
+                        "INSERT INTO app.contract_organizations (contract_id, organization_id, updated_at) VALUES (%s, %s, now())",
+                        (contract_id, payload["organizationId"]),
+                    )
+                    manager_user_id = parse_int(payload.get("managerUserId")) or None
+                    cur.execute(
+                        """
+                        INSERT INTO app.contract_details
+                            (contract_id, manager, manager_user_id, updated_at)
+                        VALUES (%s, %s, %s, now())
+                        """,
+                        (contract_id, manager_names.get(manager_user_id, ""), manager_user_id),
+                    )
+            else:
+                values = [worklog_values(payload) for payload in payloads]
+                cur.executemany(
+                    """
+                    INSERT INTO work_logs
+                        (company_id, contract_id, work_date, category, status, worker, title, content)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    [tuple(value[key] for key in (
+                        "company_id", "contract_id", "work_date", "category", "status", "worker", "title", "content"
+                    )) for value in values],
+                )
+    return len(payloads)
+
+
+@app.get("/api/excel-template/{kind}")
+def excel_template(kind: str, request: Request) -> Response:
+    template = EXCEL_TEMPLATES.get(kind)
+    if not template:
+        raise HTTPException(status_code=404, detail="지원하지 않는 Excel 종류입니다.")
+    ensure_permission(request, template["permission"])
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "일괄등록"
+    sheet.append(template["headers"])
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = f"A1:{sheet.cell(row=1, column=len(template['headers'])).coordinate}"
+    for cell in sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill(fill_type="solid", fgColor="0077C0")
+    for index, header in enumerate(template["headers"], start=1):
+        sheet.column_dimensions[sheet.cell(row=1, column=index).column_letter].width = max(14, min(28, len(header) * 2 + 4))
+    guide = workbook.create_sheet("작성안내")
+    guide.append(["Excel 일괄등록 작성안내"])
+    guide["A1"].font = Font(bold=True, color="FFFFFF")
+    guide["A1"].fill = PatternFill(fill_type="solid", fgColor="0077C0")
+    for message in template["guides"]:
+        guide.append([message])
+    guide.column_dimensions["A"].width = 72
+    output = io.BytesIO()
+    workbook.save(output)
+    filename = template["filename"]
+    return Response(
+        content=output.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
+@app.post("/api/excel-import/{kind}")
+async def excel_import(
+    kind: str,
+    request: Request,
+    file: UploadFile = File(...),
+    commit: bool = Form(False),
+) -> dict[str, Any]:
+    ensure_excel_import_admin(request)
+    if kind not in {"companies", "contracts", "worklogs"}:
+        raise HTTPException(status_code=404, detail="지원하지 않는 Excel 종류입니다.")
+    if not str(file.filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail=".xlsx 파일만 업로드할 수 있습니다.")
+    rows = decode_excel_upload(await file.read())
+    if not rows:
+        raise HTTPException(status_code=400, detail="등록할 데이터 행이 없습니다.")
+    if len(rows) > 1000:
+        raise HTTPException(status_code=400, detail="한 번에 최대 1,000행까지 등록할 수 있습니다.")
+    payloads, errors = validate_excel_rows(kind, rows)
+    if errors or not commit:
+        return {"total": len(rows), "valid": len(rows) - len(errors), "errors": errors, "committed": 0}
+    created = insert_excel_rows(kind, payloads)
+    audit_tables = {"companies": "public.companies", "contracts": "public.contracts", "worklogs": "public.work_logs"}
+    write_audit_log(request, "excel_import", audit_tables[kind], None, f"{created} rows")
+    return {"total": len(rows), "valid": len(rows), "errors": [], "committed": created}
 
 
 @app.post("/api/documents")

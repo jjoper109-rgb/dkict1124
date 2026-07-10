@@ -1,5 +1,7 @@
 const DEFAULT_ALERT_DAYS = 60;
+const REMEMBERED_LOGIN_ID_KEY = "maintenanceContractManager.rememberedLoginId";
 const DOCUMENT_GROUPS_PER_PAGE = 12;
+const LIST_ITEMS_PER_PAGE = 20;
 
 const state = {
   view: "dashboard",
@@ -14,6 +16,7 @@ const state = {
   calendarMonth: "",
   collapsedOrganizationIds: new Set(),
   documentPage: 1,
+  listPages: { companies: 1, contracts: 1, worklogs: 1, users: 1 },
   contractListMode: "all",
   modal: null,
   user: null,
@@ -134,6 +137,18 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 function bindLogin() {
+  const usernameInput = document.getElementById("loginUsername");
+  const rememberIdInput = document.getElementById("rememberLoginId");
+  try {
+    const rememberedId = localStorage.getItem(REMEMBERED_LOGIN_ID_KEY) || "";
+    if (rememberedId) {
+      usernameInput.value = rememberedId;
+      rememberIdInput.checked = true;
+    }
+  } catch (_error) {
+    // 브라우저 저장소를 사용할 수 없어도 로그인은 계속 진행합니다.
+  }
+
   document.getElementById("loginForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const error = document.getElementById("loginError");
@@ -150,6 +165,15 @@ function bindLogin() {
           password: String(formData.get("password") || "")
         })
       });
+      try {
+        if (rememberIdInput.checked) {
+          localStorage.setItem(REMEMBERED_LOGIN_ID_KEY, String(formData.get("username") || "").trim());
+        } else {
+          localStorage.removeItem(REMEMBERED_LOGIN_ID_KEY);
+        }
+      } catch (_error) {
+        // 저장 실패가 로그인 성공을 막지 않도록 합니다.
+      }
       await startAuthenticatedApp(result.user);
     } catch (err) {
       error.textContent = err.message;
@@ -392,12 +416,79 @@ function renderContactTable(company) {
   `;
 }
 
+function renderExcelActions(kind) {
+  return `
+    <button type="button" class="ghost-button" data-excel-template="${kind}">일괄 등록 양식 내려받기</button>
+    ${state.user?.role === "admin" ? `<button type="button" class="secondary-button" data-excel-import="${kind}">일괄 등록</button>` : ""}
+  `;
+}
+
+function paginatedItems(type, items) {
+  const totalPages = Math.max(1, Math.ceil(items.length / LIST_ITEMS_PER_PAGE));
+  const page = Math.min(Math.max(1, Number(state.listPages[type]) || 1), totalPages);
+  state.listPages[type] = page;
+  const start = (page - 1) * LIST_ITEMS_PER_PAGE;
+  return { items: items.slice(start, start + LIST_ITEMS_PER_PAGE), page, totalPages };
+}
+
+function renderListPagination(type, totalItems) {
+  if (!totalItems) return "";
+  const totalPages = Math.max(1, Math.ceil(totalItems / LIST_ITEMS_PER_PAGE));
+  const page = Math.min(Math.max(1, Number(state.listPages[type]) || 1), totalPages);
+  return `
+    <nav class="list-pagination" aria-label="목록 페이지">
+      <button type="button" class="ghost-button" data-list-page="${type}" data-page="${page - 1}" ${page <= 1 ? "disabled" : ""} aria-label="이전 페이지">&lt;</button>
+      <span>${page} / ${totalPages}</span>
+      <button type="button" class="ghost-button" data-list-page="${type}" data-page="${page + 1}" ${page >= totalPages ? "disabled" : ""} aria-label="다음 페이지">&gt;</button>
+    </nav>
+  `;
+}
+
+function downloadExcelTemplate(kind) {
+  window.location.href = `/api/excel-template/${kind}`;
+}
+
+async function selectExcelImport(kind) {
+  if (state.user?.role !== "admin") return;
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const validationForm = new FormData();
+      validationForm.append("file", file);
+      validationForm.append("commit", "false");
+      const validation = await apiJson(`/api/excel-import/${kind}`, { method: "POST", body: validationForm });
+      if (validation.errors?.length) {
+        const details = validation.errors.slice(0, 10).map((error) => `${error.row}행: ${error.messages.join(" ")}`).join("\n");
+        const more = validation.errors.length > 10 ? `\n외 ${validation.errors.length - 10}개 오류` : "";
+        alert(`Excel 검증 실패\n정상 ${validation.valid}건 / 오류 ${validation.errors.length}건\n\n${details}${more}`);
+        return;
+      }
+      if (!confirm(`Excel 검증이 완료되었습니다.\n총 ${validation.total}건을 신규 등록하시겠습니까?\n기존 데이터는 수정하거나 삭제하지 않습니다.`)) return;
+      const commitForm = new FormData();
+      commitForm.append("file", file);
+      commitForm.append("commit", "true");
+      const result = await apiJson(`/api/excel-import/${kind}`, { method: "POST", body: commitForm });
+      alert(`${result.committed}건이 등록되었습니다.`);
+      await loadServerData();
+      renderView();
+    } catch (error) {
+      alert(`Excel 등록 실패: ${error.message}`);
+    }
+  }, { once: true });
+  input.click();
+}
+
 function renderCompanies() {
-  const companies = filterCompanies(state.data.companies);
+  const filteredCompanies = filterCompanies(state.data.companies);
+  const { items: companies } = paginatedItems("companies", filteredCompanies);
   return `
     <div class="toolbar">
-      <div class="toolbar-left"><span class="muted">총 ${companies.length}개 업체</span></div>
-      <div class="toolbar-right"><button class="primary-button" data-add="company"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>업체 등록</button></div>
+      <div class="toolbar-left"><span class="muted">총 ${filteredCompanies.length}개 업체</span></div>
+      <div class="toolbar-right">${renderExcelActions("companies")}<button class="primary-button" data-add="company"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>업체 등록</button></div>
     </div>
     ${companies.length ? `
       <div class="table-wrap companies-table-wrap">
@@ -428,6 +519,7 @@ function renderCompanies() {
           </tbody>
         </table>
       </div>` : empty("등록된 업체가 없습니다.")}
+    ${renderListPagination("companies", filteredCompanies.length)}
     ${renderListSearch("company", "업체 검색", [
       ["all", "전체"],
       ["name", "업체명"],
@@ -435,7 +527,7 @@ function renderCompanies() {
       ["manager", "담당자"],
       ["contactPhone", "담당자 연락처"],
       ["businessNo", "사업자번호"]
-    ], state.companySearch, `${companies.length} / ${state.data.companies.length}개 업체`)}
+    ], state.companySearch, `${filteredCompanies.length} / ${state.data.companies.length}개 업체`)}
   `;
 }
 
@@ -443,23 +535,26 @@ function renderContracts() {
   const sourceContracts = state.contractListMode === "active"
     ? state.data.contracts.filter((contract) => contract.status === "active")
     : state.data.contracts;
-  const contracts = filterContracts(sourceContracts);
+  const filteredContracts = filterContracts(sourceContracts);
+  const { items: contracts } = paginatedItems("contracts", filteredContracts);
   const listTitle = state.contractListMode === "active" ? "유지중인 계약 목록" : "전체 계약 목록";
   return `
     <div class="toolbar">
       <div class="toolbar-left"><strong>${listTitle}</strong><span class="muted">기본 만료 알림은 ${DEFAULT_ALERT_DAYS}일 전이며 계약별 변경이 가능합니다.</span></div>
       <div class="toolbar-right">
+        ${renderExcelActions("contracts")}
         ${state.contractListMode === "active" ? `<button class="ghost-button" data-contract-mode="all">전체 계약 보기</button>` : ""}
         ${canCreateContracts() ? `<button class="primary-button" data-add="contract"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>계약 등록</button>` : ""}
       </div>
     </div>
     ${renderContractTable(contracts, false)}
+    ${renderListPagination("contracts", filteredContracts.length)}
     ${renderListSearch("contract", "계약 검색", [
       ["all", "전체"],
       ["name", "계약명"],
       ["organization", "담당부서"],
       ["manager", "담당자"]
-    ], state.contractSearch, `${contracts.length} / ${sourceContracts.length}개 계약`)}
+    ], state.contractSearch, `${filteredContracts.length} / ${sourceContracts.length}개 계약`)}
   `;
 }
 
@@ -495,11 +590,12 @@ function updateListSearch(type, formData) {
 }
 
 function renderWorklogs() {
-  const logs = filterWorklogs(state.data.worklogs);
+  const filteredLogs = filterWorklogs(state.data.worklogs);
+  const { items: logs } = paginatedItems("worklogs", filteredLogs);
   return `
     <div class="toolbar">
       <div class="toolbar-left"><span class="muted">방문, 원격, 장애, 부품 교체, 정기점검 이력을 기록합니다.</span></div>
-      <div class="toolbar-right">${hasPermission("menu.worklog.create") ? `<button class="primary-button" data-add="worklog"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>작업 등록</button>` : ""}</div>
+      <div class="toolbar-right">${renderExcelActions("worklogs")}${hasPermission("menu.worklog.create") ? `<button class="primary-button" data-add="worklog"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>작업 등록</button>` : ""}</div>
     </div>
     ${logs.length ? `
       <div class="table-wrap">
@@ -520,6 +616,7 @@ function renderWorklogs() {
           </tbody>
         </table>
       </div>` : empty("등록된 작업 이력이 없습니다.")}
+    ${renderListPagination("worklogs", filteredLogs.length)}
   `;
 }
 
@@ -529,7 +626,6 @@ function renderSchedule() {
   const openLogs = state.data.worklogs.filter((log) => log.status !== "done");
   return `
     <div class="grid stats-grid">
-      ${statCard("기본 알림", `${DEFAULT_ALERT_DAYS}일 전`)}
       ${statCard("만료 예정", upcoming.length)}
       ${statCard("이미 만료", overdue.length)}
       ${statCard("미처리 요청", openLogs.length)}
@@ -716,7 +812,8 @@ function renderStats() {
 }
 
 function renderUsers() {
-  const users = state.data.users || [];
+  const allUsers = state.data.users || [];
+  const { items: users } = paginatedItems("users", allUsers);
   return `
     <div class="toolbar">
       <div class="toolbar-left"><span class="muted">로그인 계정을 관리합니다.</span></div>
@@ -742,6 +839,7 @@ function renderUsers() {
           </tbody>
         </table>
       </div>` : empty("등록된 사용자가 없습니다.")}
+    ${renderListPagination("users", allUsers.length)}
   `;
 }
 
@@ -958,6 +1056,12 @@ function renderCompanyTab(company) {
 }
 
 function bindViewEvents() {
+  document.querySelectorAll("[data-excel-template]").forEach((button) => {
+    button.addEventListener("click", () => downloadExcelTemplate(button.dataset.excelTemplate));
+  });
+  document.querySelectorAll("[data-excel-import]").forEach((button) => {
+    button.addEventListener("click", () => selectExcelImport(button.dataset.excelImport));
+  });
   document.querySelectorAll("[data-go]").forEach((button) => {
     button.addEventListener("click", () => {
       state.view = button.dataset.go;
@@ -969,6 +1073,7 @@ function bindViewEvents() {
       if (button.dataset.statAction === "active-contracts") {
         state.view = "contracts";
         state.contractListMode = "active";
+        state.listPages.contracts = 1;
         state.selectedCompanyId = null;
         state.focusedContractId = "";
         render();
@@ -978,13 +1083,24 @@ function bindViewEvents() {
   document.querySelectorAll("[data-contract-mode]").forEach((button) => {
     button.addEventListener("click", () => {
       state.contractListMode = button.dataset.contractMode;
+      state.listPages.contracts = 1;
       renderView();
+    });
+  });
+  document.querySelectorAll("[data-list-page]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const type = button.dataset.listPage;
+      state.listPages[type] = Number(button.dataset.page) || 1;
+      renderView();
+      document.querySelector(".main")?.scrollTo({ top: 0, behavior: "smooth" });
     });
   });
   document.querySelectorAll("[data-list-search]").forEach((form) => {
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       updateListSearch(form.dataset.listSearch, new FormData(form));
+      const pageType = form.dataset.listSearch === "company" ? "companies" : "contracts";
+      state.listPages[pageType] = 1;
       renderView();
     });
   });
@@ -993,6 +1109,7 @@ function bindViewEvents() {
       const type = button.dataset.clearListSearch;
       if (type === "company") state.companySearch = { field: "all", query: "" };
       if (type === "contract") state.contractSearch = { field: "all", query: "" };
+      state.listPages[type === "company" ? "companies" : "contracts"] = 1;
       renderView();
     });
   });
@@ -1293,7 +1410,10 @@ function renderForm(type, item) {
     ? fieldsFor(type).filter(([key]) => key !== "password")
     : fieldsFor(type);
   const passwordPanel = type === "user" && state.modal?.id ? renderUserPasswordChangePanel() : "";
-  return `${ocrPanel}<div class="form-grid">${fields.map(([key, labelText, inputType, required]) => renderField(key, labelText, inputType, item, required)).join("")}${passwordPanel}</div>${contactsPanel}`;
+  return `${ocrPanel}<div class="form-grid">${fields.map(([key, labelText, inputType, required]) => {
+    const worklogContractRequired = type === "worklog" && key === "contractId" && !hasFullAccess();
+    return renderField(key, labelText, inputType, item, required || worklogContractRequired);
+  }).join("")}${passwordPanel}</div>${contactsPanel}`;
 }
 
 function renderUserPasswordChangePanel() {
@@ -1968,6 +2088,9 @@ function hasPermission(permission) {
       "menu.pending.view",
       "menu.asset.view",
       "menu.worklog.view",
+      "menu.worklog.create",
+      "menu.worklog.update",
+      "menu.worklog.delete",
       "menu.document.view"
     ].includes(permission);
   }
@@ -1983,6 +2106,7 @@ function hasPermission(permission) {
       "menu.pending.view",
       "menu.asset.view",
       "menu.worklog.view",
+      "menu.worklog.create",
       "menu.document.view"
     ].includes(permission);
   }

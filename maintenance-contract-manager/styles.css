@@ -40,6 +40,10 @@ body.is-authenticated .login-screen {
   display: none;
 }
 
+body.is-authenticated {
+  overflow: hidden;
+}
+
 .login-screen {
   min-height: 100vh;
   display: grid;
@@ -66,7 +70,7 @@ body.is-authenticated .login-screen {
 
 .login-logo {
   position: absolute;
-  left: -38px;
+  left: 0;
   top: -94px;
   width: 210px;
   height: 68px;
@@ -92,6 +96,24 @@ body.is-authenticated .login-screen {
   padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.login-card .login-remember-id {
+  width: fit-content;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.login-card .login-remember-id input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--primary);
 }
 
 .login-card .primary-button {
@@ -124,12 +146,14 @@ svg {
 }
 
 .app-shell {
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
   display: grid;
   grid-template-columns: 300px 1fr;
 }
 
 .sidebar {
+  height: 100vh;
   background: #EAF5FC;
   color: var(--ink);
   padding: var(--sidebar-top-space) 18px 22px;
@@ -137,6 +161,7 @@ svg {
   flex-direction: column;
   gap: 24px;
   border-right: 1px solid #cfe7f5;
+  overflow-y: auto;
 }
 
 .brand {
@@ -201,9 +226,11 @@ svg {
 }
 
 .main {
+  height: 100vh;
   min-width: 0;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
 }
 
 .topbar {
@@ -239,6 +266,27 @@ h1 {
 
 .content {
   padding: 24px 28px 40px;
+}
+
+.list-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.list-pagination .ghost-button {
+  min-width: 42px;
+  padding: 8px 12px;
+  font-size: 18px;
+}
+
+.list-pagination span {
+  min-width: 64px;
+  color: var(--muted);
+  text-align: center;
+  font-weight: 700;
 }
 
 .primary-button, .secondary-button, .danger-button, .ghost-button, .icon-button {
@@ -1434,15 +1482,28 @@ input:focus, select:focus, textarea:focus {
 }
 
 @media (max-width: 960px) {
+  body.is-authenticated {
+    overflow: auto;
+  }
+
   .app-shell {
+    height: auto;
+    min-height: 100vh;
     grid-template-columns: 1fr;
   }
 
   .sidebar {
+    height: auto;
     position: sticky;
     top: 0;
     z-index: 10;
     padding: 12px;
+    overflow: visible;
+  }
+
+  .main {
+    height: auto;
+    overflow: visible;
   }
 
   .brand {

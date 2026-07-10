@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>전산/통신 유지보수 관리 시스템</title>
   <link rel="icon" href="assets/DK_logo.ico">
-  <link rel="stylesheet" href="styles.css?v=20260710-contract-org-scope1">
+  <link rel="stylesheet" href="styles.css?v=20260710-pagination1">
 </head>
 <body>
   <section class="login-screen" id="loginScreen">
@@ -17,6 +17,10 @@
         <input id="loginUsername" name="username" autocomplete="username" required>
         <label for="loginPassword">비밀번호</label>
         <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
+        <label class="login-remember-id" for="rememberLoginId">
+          <input id="rememberLoginId" type="checkbox">
+          <span>아이디 저장</span>
+        </label>
         <button type="submit" class="primary-button">로그인</button>
         <p class="login-error" id="loginError"></p>
       </form>
@@ -100,6 +104,6 @@
     </form>
   </div>
 
-  <script src="app.js?v=20260710-menu-rbac2"></script>
+  <script src="app.js?v=20260710-pagination1"></script>
 </body>
 </html>
