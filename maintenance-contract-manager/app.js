@@ -18,6 +18,7 @@ const state = {
   modal: null,
   user: null,
   permissions: [],
+  allowedContractOrganizationIds: [],
   data: emptyData(),
   config: { defaultAlertDays: DEFAULT_ALERT_DAYS, uploadDir: "" }
 };
@@ -225,6 +226,7 @@ function emptyData() {
     pendingItems: [],
     documents: [],
     organizations: [],
+    organizationContractLinks: [],
     users: []
   };
 }
@@ -240,9 +242,11 @@ async function loadServerData() {
       pendingItems: data.pendingItems || [],
       documents: data.documents || [],
       organizations: data.organizations || [],
+      organizationContractLinks: data.organizationContractLinks || [],
       users: data.users || []
     };
     state.permissions = data.permissions || [];
+    state.allowedContractOrganizationIds = (data.allowedContractOrganizationIds || []).map(String);
     state.config = data.config || state.config;
     if (hasPermission("menu.user.manage")) {
       const userData = await apiJson("/api/users");
@@ -752,7 +756,7 @@ function renderOrganizations() {
 
   return `
     <div class="toolbar">
-      <div class="toolbar-left"><span class="muted">상위 부서와 하위 부서를 관리합니다.</span></div>
+      <div class="toolbar-left"><span class="muted">상위 부서와 하위 부서, 계약 담당부서 연계를 관리합니다.</span></div>
       <div class="toolbar-right"><button class="primary-button" data-add="organization"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>조직 등록</button></div>
     </div>
     <div class="org-layout">
@@ -779,9 +783,50 @@ function renderOrganizations() {
               <tr><th>문서</th><td>${documentCount}건</td></tr>
             </tbody></table>
           </div>
+          ${renderOrganizationContractLinkEditor(selected, organizations)}
         ` : empty("조직을 등록해 주세요.")}
       </section>
     </div>
+  `;
+}
+
+function linkedContractOrganizationIds(organizationId) {
+  const sourceId = String(organizationId || "");
+  const linkedIds = new Set();
+  (state.data.organizationContractLinks || []).forEach((link) => {
+    const a = String(link.organizationAId || "");
+    const b = String(link.organizationBId || "");
+    if (a === sourceId && b) linkedIds.add(b);
+    if (b === sourceId && a) linkedIds.add(a);
+  });
+  return linkedIds;
+}
+
+function renderOrganizationContractLinkEditor(selected, organizations) {
+  if (!hasPermission("menu.organization.manage")) return "";
+  if (!selected.parentId) {
+    return `<div class="item-card" style="margin-top:16px"><h3>계약 담당부서 연계</h3><p class="muted">최상위 조직은 계약 담당부서 연계 대상에서 제외됩니다.</p></div>`;
+  }
+  const linkedIds = linkedContractOrganizationIds(selected.id);
+  const candidates = organizations.filter((org) => org.parentId && String(org.id) !== String(selected.id));
+  return `
+    <form class="item-card" style="margin-top:16px" data-org-link-form="${selected.id}">
+      <div class="panel-header">
+        <div>
+          <h3>계약 담당부서 양방향 연계</h3>
+          <p class="muted">선택한 조직끼리는 팀장·팀원이 양쪽 담당부서를 모두 선택할 수 있습니다.</p>
+        </div>
+        <button type="submit" class="primary-button">연계 저장</button>
+      </div>
+      <div class="form-grid">
+        ${candidates.map((org) => `
+          <label class="field" style="display:flex;align-items:center;gap:8px">
+            <input type="checkbox" name="linkedOrganizationId" value="${org.id}" ${linkedIds.has(String(org.id)) ? "checked" : ""}>
+            <span>${escapeHtml(org.name)}</span>
+          </label>
+        `).join("") || `<span class="muted">연계할 수 있는 조직이 없습니다.</span>`}
+      </div>
+    </form>
   `;
 }
 
@@ -801,22 +846,7 @@ function isRootOrganization(id) {
   return Boolean(org && !org.parentId);
 }
 
-function parentContractOrganizationIdForCurrentUser() {
-  const currentOrg = organizationById(state.user?.organizationId);
-  const parent = organizationById(currentOrg?.parentId);
-  if (!parent || !parent.parentId) return "";
-  return String(parent.id);
-}
-
 function contractOrganizationPickerOptions() {
-  if (state.user?.role === "team_member") {
-    const parentId = parentContractOrganizationIdForCurrentUser();
-    return {
-      emptyLabel: "선택 안 함",
-      allowEmpty: false,
-      selectableIds: parentId ? [parentId] : []
-    };
-  }
   if (hasFullAccess()) {
     return {
       emptyLabel: "선택 안 함",
@@ -826,7 +856,7 @@ function contractOrganizationPickerOptions() {
   return {
     emptyLabel: "선택 안 함",
     allowEmpty: false,
-    selectableIds: state.user?.organizationId ? [String(state.user.organizationId)] : []
+    selectableIds: state.allowedContractOrganizationIds.map(String)
   };
 }
 
@@ -999,6 +1029,31 @@ function bindViewEvents() {
   });
   document.querySelectorAll("[data-delete-organization]").forEach((button) => {
     button.addEventListener("click", () => deleteOrganization(button.dataset.deleteOrganization));
+  });
+  document.querySelectorAll("[data-org-link-form]").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = form.querySelector('button[type="submit"]');
+      const organizationIds = [...form.querySelectorAll('input[name="linkedOrganizationId"]:checked')].map((input) => input.value);
+      if (button) {
+        button.disabled = true;
+        button.textContent = "저장 중...";
+      }
+      try {
+        await apiJson(`/api/organizations/${form.dataset.orgLinkForm}/contract-links`, {
+          method: "PUT",
+          body: JSON.stringify({ organizationIds })
+        });
+        await loadServerData();
+        renderView();
+      } catch (error) {
+        alert(`연계 저장 실패: ${error.message}`);
+        if (button) {
+          button.disabled = false;
+          button.textContent = "연계 저장";
+        }
+      }
+    });
   });
   document.querySelectorAll("[data-detail-company]").forEach((button) => {
     button.addEventListener("click", () => {

@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 from time import time
 
+from organization_links import normalize_organization_pair, resolve_allowed_organization_ids
+
 import fitz
 import psycopg
 import pytesseract
@@ -272,11 +274,14 @@ def fetch_all(table: str, order_by: str = "id") -> list[dict[str, Any]]:
 def scoped_contract_where(user: dict[str, Any], alias: str = "id") -> tuple[str, tuple[Any, ...]]:
     if user.get("role") in FULL_ACCESS_ROLES:
         return "", ()
-    organization_id = parse_int(user.get("organizationId"))
-    if not organization_id:
+    organization_ids = [parse_int(value) for value in get_allowed_contract_organization_ids(user)]
+    organization_ids = [value for value in organization_ids if value]
+    if not organization_ids:
         return " WHERE 1 = 0", ()
-    return f" WHERE {alias} IN (SELECT contract_id FROM app.contract_organizations WHERE organization_id = %s)", (organization_id,)
-
+    return (
+        f" WHERE {alias} IN (SELECT contract_id FROM app.contract_organizations WHERE organization_id = ANY(%s))",
+        (organization_ids,),
+    )
 
 def fetch_companies(user: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     with db() as conn:
@@ -321,15 +326,20 @@ def fetch_documents(user: dict[str, Any]) -> list[dict[str, Any]]:
     where_sql = ""
     params: tuple[Any, ...] = ()
     if user.get("role") not in FULL_ACCESS_ROLES:
-        organization_id = parse_int(user.get("organizationId"))
-        if organization_id:
+        organization_ids = [parse_int(value) for value in get_allowed_contract_organization_ids(user)]
+        organization_ids = [value for value in organization_ids if value]
+        if organization_ids:
             where_sql = """
                 WHERE (
-                    d.contract_id IN (SELECT contract_id FROM app.contract_organizations WHERE organization_id = %s)
-                    OR d.id IN (SELECT document_id FROM app.document_organizations WHERE organization_id = %s)
+                    d.contract_id IN (
+                        SELECT contract_id FROM app.contract_organizations WHERE organization_id = ANY(%s)
+                    )
+                    OR d.id IN (
+                        SELECT document_id FROM app.document_organizations WHERE organization_id = ANY(%s)
+                    )
                 )
             """
-            params = (organization_id, organization_id)
+            params = (organization_ids, organization_ids)
         else:
             where_sql = "WHERE 1 = 0"
     with db() as conn:
@@ -347,15 +357,15 @@ def fetch_documents(user: dict[str, Any]) -> list[dict[str, Any]]:
             )
             return [row_to_client(row) for row in cur.fetchall()]
 
-
 def fetch_pending_items(user: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     where_sql = ""
     params: tuple[Any, ...] = ()
     if user and user.get("role") not in FULL_ACCESS_ROLES:
-        organization_id = parse_int(user.get("organizationId"))
-        if organization_id:
-            where_sql = "WHERE contract_id IN (SELECT contract_id FROM app.contract_organizations WHERE organization_id = %s)"
-            params = (organization_id,)
+        organization_ids = [parse_int(value) for value in get_allowed_contract_organization_ids(user)]
+        organization_ids = [value for value in organization_ids if value]
+        if organization_ids:
+            where_sql = "WHERE contract_id IN (SELECT contract_id FROM app.contract_organizations WHERE organization_id = ANY(%s))"
+            params = (organization_ids,)
         else:
             where_sql = "WHERE 1 = 0"
     with db() as conn:
@@ -373,7 +383,6 @@ def fetch_pending_items(user: dict[str, Any] | None = None) -> list[dict[str, An
                 params,
             )
             return [row_to_client(row) for row in cur.fetchall()]
-
 
 def attach_company_contacts(cur, companies: list[dict[str, Any]]) -> None:
     company_ids = [parse_int(company.get("id")) for company in companies if parse_int(company.get("id"))]
@@ -707,6 +716,20 @@ def init_auth_schema() -> None:
             )
             cur.execute(
                 """
+                CREATE TABLE IF NOT EXISTS app.organization_contract_links (
+                    id BIGSERIAL PRIMARY KEY,
+                    organization_a_id BIGINT NOT NULL REFERENCES app.organizations(id) ON DELETE CASCADE,
+                    organization_b_id BIGINT NOT NULL REFERENCES app.organizations(id) ON DELETE CASCADE,
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMP NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMP NOT NULL DEFAULT now(),
+                    CONSTRAINT organization_contract_links_distinct CHECK (organization_a_id < organization_b_id),
+                    CONSTRAINT organization_contract_links_pair_unique UNIQUE (organization_a_id, organization_b_id)
+                )
+                """
+            )
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS app.contract_details (
                     contract_id INTEGER PRIMARY KEY REFERENCES public.contracts(id) ON DELETE CASCADE,
                     department TEXT,
@@ -794,6 +817,8 @@ def init_auth_schema() -> None:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_app_users_organization ON app.app_users (organization_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_company_organizations_org ON app.company_organizations (organization_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_contract_organizations_org ON app.contract_organizations (organization_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_org_contract_links_a ON app.organization_contract_links (organization_a_id) WHERE is_active = TRUE")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_org_contract_links_b ON app.organization_contract_links (organization_b_id) WHERE is_active = TRUE")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_contract_details_contract ON app.contract_details (contract_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_document_organizations_org ON app.document_organizations (organization_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_company_contacts_company ON app.company_contacts (company_id)")
@@ -834,6 +859,16 @@ def init_auth_schema() -> None:
                 """
             )
             seed_organizations(cur)
+            cur.execute(
+                """
+                INSERT INTO app.organization_contract_links
+                    (organization_a_id, organization_b_id, is_active, updated_at)
+                SELECT LEAST(id, parent_id), GREATEST(id, parent_id), TRUE, now()
+                FROM app.organizations
+                WHERE parent_id IS NOT NULL AND is_active = TRUE
+                ON CONFLICT (organization_a_id, organization_b_id) DO NOTHING
+                """
+            )
             cur.execute("UPDATE app.app_users SET role = 'team_member' WHERE role IN ('staff', 'viewer')")
             cur.execute("UPDATE app.app_users SET role = 'team_lead' WHERE role = 'leader'")
             cur.execute("SELECT id FROM app.organizations WHERE name = %s", ("경영지원실",))
@@ -911,6 +946,131 @@ def fetch_organizations() -> list[dict[str, Any]]:
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM app.organizations WHERE is_active = TRUE ORDER BY sort_order, id")
             return [row_to_client(row) for row in cur.fetchall()]
+
+
+def fetch_organization_contract_links() -> list[dict[str, Any]]:
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT l.id, l.organization_a_id, l.organization_b_id,
+                       a.name AS organization_a_name, b.name AS organization_b_name
+                FROM app.organization_contract_links l
+                JOIN app.organizations a ON a.id = l.organization_a_id AND a.is_active = TRUE
+                JOIN app.organizations b ON b.id = l.organization_b_id AND b.is_active = TRUE
+                WHERE l.is_active = TRUE
+                  AND a.parent_id IS NOT NULL
+                  AND b.parent_id IS NOT NULL
+                ORDER BY a.name, b.name, l.id
+                """
+            )
+            return [
+                {
+                    "id": str(row["id"]),
+                    "organizationAId": str(row["organization_a_id"]),
+                    "organizationBId": str(row["organization_b_id"]),
+                    "organizationAName": row.get("organization_a_name") or "",
+                    "organizationBName": row.get("organization_b_name") or "",
+                }
+                for row in cur.fetchall()
+            ]
+
+
+def get_allowed_contract_organization_ids(user: dict[str, Any]) -> list[str]:
+    role = user.get("role")
+    with db() as conn:
+        with conn.cursor() as cur:
+            if role in FULL_ACCESS_ROLES:
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM app.organizations
+                    WHERE is_active = TRUE AND parent_id IS NOT NULL
+                    ORDER BY sort_order, id
+                    """
+                )
+                return [str(row["id"]) for row in cur.fetchall()]
+
+            source_id = parse_int(user.get("organizationId"))
+            if not source_id:
+                return []
+            cur.execute(
+                """
+                SELECT 1
+                FROM app.organizations
+                WHERE id = %s AND is_active = TRUE AND parent_id IS NOT NULL
+                """,
+                (source_id,),
+            )
+            if not cur.fetchone():
+                return []
+            cur.execute(
+                """
+                SELECT l.organization_a_id, l.organization_b_id
+                FROM app.organization_contract_links l
+                JOIN app.organizations a ON a.id = l.organization_a_id AND a.is_active = TRUE
+                JOIN app.organizations b ON b.id = l.organization_b_id AND b.is_active = TRUE
+                WHERE l.is_active = TRUE
+                  AND a.parent_id IS NOT NULL
+                  AND b.parent_id IS NOT NULL
+                  AND %s IN (l.organization_a_id, l.organization_b_id)
+                """,
+                (source_id,),
+            )
+            allowed_ids = resolve_allowed_organization_ids(source_id, cur.fetchall())
+            return [str(value) for value in allowed_ids]
+
+
+def replace_organization_contract_links(source_id: int, target_ids: list[Any]) -> None:
+    normalized_targets = {parse_int(value) for value in target_ids}
+    normalized_targets.discard(0)
+    normalized_targets.discard(source_id)
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM app.organizations
+                WHERE id = %s AND is_active = TRUE AND parent_id IS NOT NULL
+                """,
+                (source_id,),
+            )
+            if not cur.fetchone():
+                raise HTTPException(status_code=400, detail="연계 기준 조직을 찾을 수 없습니다.")
+
+            valid_targets: set[int] = set()
+            if normalized_targets:
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM app.organizations
+                    WHERE id = ANY(%s) AND is_active = TRUE AND parent_id IS NOT NULL
+                    """,
+                    (sorted(normalized_targets),),
+                )
+                valid_targets = {int(row["id"]) for row in cur.fetchall()}
+                if valid_targets != normalized_targets:
+                    raise HTTPException(status_code=400, detail="연계할 수 없는 조직이 포함되어 있습니다.")
+
+            cur.execute(
+                """
+                DELETE FROM app.organization_contract_links
+                WHERE organization_a_id = %s OR organization_b_id = %s
+                """,
+                (source_id, source_id),
+            )
+            for target_id in sorted(valid_targets):
+                first_id, second_id = normalize_organization_pair(source_id, target_id)
+                cur.execute(
+                    """
+                    INSERT INTO app.organization_contract_links
+                        (organization_a_id, organization_b_id, is_active, updated_at)
+                    VALUES (%s, %s, TRUE, now())
+                    ON CONFLICT (organization_a_id, organization_b_id)
+                    DO UPDATE SET is_active = TRUE, updated_at = now()
+                    """,
+                    (first_id, second_id),
+                )
 
 
 def fetch_users_for_admin() -> list[dict[str, Any]]:
@@ -1019,54 +1179,37 @@ def ensure_admin_delete(request: Request) -> None:
 
 
 def organization_for_payload(payload: dict[str, Any], user: dict[str, Any]) -> int | None:
-    if user.get("role") in FULL_ACCESS_ROLES:
-        return parse_int(payload.get("organizationId")) or None
-    if user.get("role") == "team_member":
-        return parse_int(payload.get("organizationId")) or None
-    return parse_int(user.get("organizationId")) or None
-
-
-def parent_contract_organization_for_user(user: dict[str, Any]) -> int | None:
-    organization_id = parse_int(user.get("organizationId"))
-    if not organization_id:
-        return None
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT parent.id AS parent_id, parent.parent_id AS grand_parent_id
-                FROM app.organizations child
-                LEFT JOIN app.organizations parent ON parent.id = child.parent_id AND parent.is_active = TRUE
-                WHERE child.id = %s AND child.is_active = TRUE
-                """,
-                (organization_id,),
-            )
-            row = cur.fetchone()
-    if not row or not row.get("parent_id") or row.get("grand_parent_id") is None:
-        return None
-    return int(row["parent_id"])
+    return parse_int(payload.get("organizationId")) or None
 
 
 def ensure_valid_contract_assignment(payload: dict[str, Any], user: dict[str, Any]) -> None:
     role = user.get("role")
-    if role in FULL_ACCESS_ROLES:
-        org_id = parse_int(payload.get("organizationId"))
-        if org_id and is_root_organization(org_id):
-            raise HTTPException(status_code=403, detail=CONTRACT_ASSIGNMENT_ERROR)
-        return
-    user_org_id = parse_int(user.get("organizationId"))
     payload_org_id = parse_int(payload.get("organizationId"))
     manager_user_id = parse_int(payload.get("managerUserId"))
-    if role == "team_member":
-        allowed_org_id = parent_contract_organization_for_user(user)
-        if not allowed_org_id or payload_org_id != allowed_org_id:
-            raise HTTPException(status_code=403, detail=CONTRACT_ASSIGNMENT_ERROR)
-        if manager_user_id != parse_int(user.get("id")):
+    if role in FULL_ACCESS_ROLES:
+        if payload_org_id and not is_selectable_contract_organization(payload_org_id):
             raise HTTPException(status_code=403, detail=CONTRACT_ASSIGNMENT_ERROR)
         return
-    if payload_org_id and payload_org_id != user_org_id:
+
+    allowed_org_ids = {parse_int(value) for value in get_allowed_contract_organization_ids(user)}
+    if not payload_org_id or payload_org_id not in allowed_org_ids:
+        raise HTTPException(status_code=403, detail=CONTRACT_ASSIGNMENT_ERROR)
+    if role == "team_member" and manager_user_id != parse_int(user.get("id")):
         raise HTTPException(status_code=403, detail=CONTRACT_ASSIGNMENT_ERROR)
 
+
+def is_selectable_contract_organization(organization_id: int) -> bool:
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM app.organizations
+                WHERE id = %s AND is_active = TRUE AND parent_id IS NOT NULL
+                """,
+                (organization_id,),
+            )
+            return cur.fetchone() is not None
 
 def is_root_organization(organization_id: int) -> bool:
     with db() as conn:
@@ -1093,25 +1236,30 @@ def ensure_contract_access(contract_id: int, request: Request) -> None:
     user = current_user_full(request)
     if user.get("role") in FULL_ACCESS_ROLES:
         return
-    organization_id = parse_int(user.get("organizationId"))
-    if not contract_id or not organization_id:
+    organization_ids = [parse_int(value) for value in get_allowed_contract_organization_ids(user)]
+    organization_ids = [value for value in organization_ids if value]
+    if not contract_id or not organization_ids:
         raise HTTPException(status_code=403, detail="조직 권한이 없습니다.")
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT 1 FROM app.contract_organizations WHERE contract_id = %s AND organization_id = %s",
-                (contract_id, organization_id),
+                """
+                SELECT 1
+                FROM app.contract_organizations
+                WHERE contract_id = %s AND organization_id = ANY(%s)
+                """,
+                (contract_id, organization_ids),
             )
             if not cur.fetchone():
                 raise HTTPException(status_code=403, detail="조직 권한이 없습니다.")
-
 
 def ensure_document_access(document_id: int, request: Request) -> None:
     user = current_user_full(request)
     if user.get("role") in FULL_ACCESS_ROLES:
         return
-    organization_id = parse_int(user.get("organizationId"))
-    if not document_id or not organization_id:
+    organization_ids = [parse_int(value) for value in get_allowed_contract_organization_ids(user)]
+    organization_ids = [value for value in organization_ids if value]
+    if not document_id or not organization_ids:
         raise HTTPException(status_code=403, detail="조직 권한이 없습니다.")
     with db() as conn:
         with conn.cursor() as cur:
@@ -1121,13 +1269,13 @@ def ensure_document_access(document_id: int, request: Request) -> None:
                 FROM public.documents d
                 LEFT JOIN app.contract_organizations co ON co.contract_id = d.contract_id
                 LEFT JOIN app.document_organizations doo ON doo.document_id = d.id
-                WHERE d.id = %s AND (co.organization_id = %s OR doo.organization_id = %s)
+                WHERE d.id = %s
+                  AND (co.organization_id = ANY(%s) OR doo.organization_id = ANY(%s))
                 """,
-                (document_id, organization_id, organization_id),
+                (document_id, organization_ids, organization_ids),
             )
             if not cur.fetchone():
                 raise HTTPException(status_code=403, detail="조직 권한이 없습니다.")
-
 
 def ensure_item_company_access(table: str, item_id: int, request: Request) -> None:
     row = fetch_one(table, item_id)
@@ -1665,6 +1813,17 @@ def delete_organization(item_id: int, request: Request) -> dict[str, bool]:
     return {"ok": True}
 
 
+@app.put("/api/organizations/{item_id}/contract-links")
+def update_organization_contract_links(item_id: int, payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    ensure_permission(request, "menu.organization.manage")
+    target_ids = payload.get("organizationIds")
+    if not isinstance(target_ids, list):
+        raise HTTPException(status_code=400, detail="연계 조직 목록 형식이 올바르지 않습니다.")
+    replace_organization_contract_links(item_id, target_ids)
+    write_audit_log(request, "update_contract_links", "app.organizations", item_id, ",".join(map(str, target_ids)))
+    return {"organizationContractLinks": fetch_organization_contract_links()}
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     upload_dir = Path(CONFIG["UPLOAD_DIR"])
@@ -1693,6 +1852,8 @@ def bootstrap(request: Request) -> dict[str, Any]:
         "pendingItems": fetch_pending_items(user),
         "documents": fetch_documents(user),
         "organizations": fetch_organizations(),
+        "organizationContractLinks": fetch_organization_contract_links() if "menu.organization.manage" in permissions else [],
+        "allowedContractOrganizationIds": get_allowed_contract_organization_ids(user),
         "users": fetch_selectable_users(user),
         "permissions": permissions,
         "config": {"defaultAlertDays": 60, "uploadDir": CONFIG["UPLOAD_DIR"]},
