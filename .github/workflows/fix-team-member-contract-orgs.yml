@@ -1,0 +1,36 @@
+name: Fix team member contract organizations
+
+on:
+  push:
+    branches:
+      - feature/organization-links
+    paths:
+      - maintenance-contract-manager/fix_team_member_contract_orgs.py
+      - .github/workflows/fix-team-member-contract-orgs.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/organization-links
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply fix
+        run: python maintenance-contract-manager/fix_team_member_contract_orgs.py
+      - name: Validate
+        run: |
+          python -m py_compile maintenance-contract-manager/server.py maintenance-contract-manager/organization_links.py
+          node --check maintenance-contract-manager/app.js
+      - name: Commit fix
+        run: |
+          git config user.name automation-bot
+          git config user.email automation-bot@users.noreply.github.com
+          git add maintenance-contract-manager/server.py maintenance-contract-manager/app.js
+          git diff --cached --quiet || git commit -m "Fix team member contract organization selection"
+          git push origin HEAD:feature/organization-links
