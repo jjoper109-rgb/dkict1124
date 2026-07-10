@@ -2002,13 +2002,15 @@ function canEditCompanies() {
 }
 
 function defaultContractOrganizationId() {
-  if (state.user?.role === "team_member") {
-    return parentContractOrganizationIdForCurrentUser();
-  }
   if (hasFullAccess()) {
     return state.data.organizations.find((org) => org.parentId)?.id || "";
   }
-  return state.user?.organizationId || "";
+  const allowedIds = (state.allowedContractOrganizationIds || []).map(String);
+  const userOrganizationId = String(state.user?.organizationId || "");
+  if (allowedIds.includes(userOrganizationId)) return userOrganizationId;
+  const parentId = String(organizationById(userOrganizationId)?.parentId || "");
+  if (parentId && allowedIds.includes(parentId)) return parentId;
+  return allowedIds[0] || userOrganizationId;
 }
 
 function defaultItem(type, companyId) {

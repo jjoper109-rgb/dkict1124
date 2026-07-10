@@ -976,6 +976,32 @@ def fetch_organization_contract_links() -> list[dict[str, Any]]:
             ]
 
 
+def contract_organization_source_id(user: dict[str, Any], cur) -> int | None:
+    organization_id = parse_int(user.get("organizationId"))
+    if not organization_id:
+        return None
+    cur.execute(
+        """
+        SELECT child.id, child.parent_id, parent.parent_id AS grand_parent_id
+        FROM app.organizations child
+        LEFT JOIN app.organizations parent
+          ON parent.id = child.parent_id AND parent.is_active = TRUE
+        WHERE child.id = %s AND child.is_active = TRUE
+        """,
+        (organization_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    if (
+        user.get("role") == "team_member"
+        and row.get("parent_id")
+        and row.get("grand_parent_id") is not None
+    ):
+        return int(row["parent_id"])
+    return organization_id
+
+
 def get_allowed_contract_organization_ids(user: dict[str, Any]) -> list[str]:
     role = user.get("role")
     with db() as conn:
@@ -991,7 +1017,7 @@ def get_allowed_contract_organization_ids(user: dict[str, Any]) -> list[str]:
                 )
                 return [str(row["id"]) for row in cur.fetchall()]
 
-            source_id = parse_int(user.get("organizationId"))
+            source_id = contract_organization_source_id(user, cur)
             if not source_id:
                 return []
             cur.execute(
@@ -1017,8 +1043,9 @@ def get_allowed_contract_organization_ids(user: dict[str, Any]) -> list[str]:
                 """,
                 (source_id,),
             )
-            allowed_ids = resolve_allowed_organization_ids(source_id, cur.fetchall())
-            return [str(value) for value in allowed_ids]
+            resolved_ids = resolve_allowed_organization_ids(source_id, cur.fetchall())
+            ordered_ids = [source_id, *sorted(value for value in resolved_ids if value != source_id)]
+            return [str(value) for value in ordered_ids]
 
 
 def replace_organization_contract_links(source_id: int, target_ids: list[Any]) -> None:
