@@ -8,6 +8,7 @@ const state = {
   search: "",
   companySearch: { field: "all", query: "" },
   contractSearch: { field: "all", query: "" },
+  employeeSearch: { field: "all", query: "" },
   selectedCompanyId: null,
   selectedTab: "basic",
   selectedDocumentTitle: "",
@@ -16,7 +17,7 @@ const state = {
   calendarMonth: "",
   collapsedOrganizationIds: new Set(),
   documentPage: 1,
-  listPages: { companies: 1, contracts: 1, worklogs: 1, users: 1 },
+  listPages: { companies: 1, contracts: 1, worklogs: 1, users: 1, employees: 1 },
   contractListMode: "all",
   modal: null,
   user: null,
@@ -49,6 +50,78 @@ const viewPermissions = {
   users: "menu.user.view",
   organizations: "menu.organization.view"
 };
+
+let isApplyingRoute = false;
+
+function safeDecodeRoutePart(value) {
+  try {
+    return decodeURIComponent(value || "");
+  } catch (_error) {
+    return value || "";
+  }
+}
+
+function buildRouteHash() {
+  const view = state.selectedCompanyId ? "companies" : state.view || "dashboard";
+  if (view === "companies" && state.selectedCompanyId) {
+    const companyId = encodeURIComponent(String(state.selectedCompanyId));
+    const tab = state.selectedTab && state.selectedTab !== "basic" ? `/tab/${encodeURIComponent(state.selectedTab)}` : "";
+    return `#companies/${companyId}${tab}`;
+  }
+  if (view === "contracts" && state.contractListMode && state.contractListMode !== "all") {
+    return `#contracts/${encodeURIComponent(state.contractListMode)}`;
+  }
+  if (view === "documents" && state.selectedDocumentTitle) {
+    return `#documents/group/${encodeURIComponent(state.selectedDocumentTitle)}`;
+  }
+  if (view === "organizations" && state.selectedOrganizationId) {
+    return `#organizations/${encodeURIComponent(String(state.selectedOrganizationId))}`;
+  }
+  return `#${view}`;
+}
+
+function updateRouteHash({ replace = false } = {}) {
+  if (isApplyingRoute || !state.user) return;
+  const nextHash = buildRouteHash();
+  if (window.location.hash === nextHash) return;
+  if (replace) {
+    history.replaceState(null, "", nextHash);
+  } else {
+    window.location.hash = nextHash;
+  }
+}
+
+function applyRouteFromHash() {
+  if (!state.user) return false;
+  const rawHash = window.location.hash.replace(/^#/, "");
+  if (!rawHash) return false;
+  const parts = rawHash.split("/").map(safeDecodeRoutePart);
+  const view = parts[0] || "dashboard";
+  if (!Object.prototype.hasOwnProperty.call(viewTitles, view)) return false;
+
+  isApplyingRoute = true;
+  state.view = view;
+  state.selectedCompanyId = null;
+  state.selectedDocumentTitle = "";
+  state.focusedContractId = "";
+  if (view !== "contracts") state.contractListMode = "all";
+
+  if (view === "companies") {
+    state.selectedCompanyId = parts[1] || null;
+    state.selectedTab = parts[2] === "tab" && parts[3] ? parts[3] : "basic";
+  } else if (view === "contracts") {
+    state.contractListMode = parts[1] || "all";
+  } else if (view === "documents") {
+    state.selectedDocumentTitle = parts[1] === "group" && parts[2] ? parts[2] : "";
+  } else if (view === "organizations") {
+    state.selectedOrganizationId = parts[1] || state.selectedOrganizationId;
+  }
+
+  isApplyingRoute = false;
+  render({ updateRoute: false });
+  updateRouteHash({ replace: true });
+  return true;
+}
 
 const companyFields = [
   ["name", "업체명", "text", true],
@@ -116,11 +189,22 @@ const pendingFields = [
 const userFields = [
   ["username", "아이디", "text", true],
   ["password", "비밀번호", "password", true],
+  ["employeeId", "직원 기준 정보", "employee"],
   ["displayName", "이름", "text"],
   ["email", "이메일", "email"],
   ["organizationId", "조직", "organization"],
   ["role", "권한", "userRole"],
   ["isActive", "사용 여부", "checkbox"]
+];
+
+const employeeFields = [
+  ["employeeNo", "사원번호", "text", true],
+  ["name", "이름", "text", true],
+  ["employmentStatus", "재직상태", "employmentStatus", true],
+  ["joinedAt", "입사일", "date", true],
+  ["resignedAt", "퇴사일", "date", true],
+  ["email", "이메일", "email"],
+  ["memo", "비고", "textarea"]
 ];
 
 const organizationFields = [
@@ -133,12 +217,25 @@ const organizationFields = [
 document.addEventListener("DOMContentLoaded", async () => {
   bindLogin();
   bindChrome();
+  window.addEventListener("hashchange", applyRouteFromHash);
   await checkLogin();
 });
 
 function bindLogin() {
   const usernameInput = document.getElementById("loginUsername");
   const rememberIdInput = document.getElementById("rememberLoginId");
+  const loginForm = document.getElementById("loginForm");
+  const registerForm = document.getElementById("registerForm");
+  document.getElementById("showRegisterBtn")?.addEventListener("click", () => {
+    document.getElementById("loginError").textContent = "";
+    loginForm.classList.add("hidden");
+    registerForm.classList.remove("hidden");
+  });
+  document.getElementById("showLoginBtn")?.addEventListener("click", () => {
+    document.getElementById("registerError").textContent = "";
+    registerForm.classList.add("hidden");
+    loginForm.classList.remove("hidden");
+  });
   try {
     const rememberedId = localStorage.getItem(REMEMBERED_LOGIN_ID_KEY) || "";
     if (rememberedId) {
@@ -149,7 +246,7 @@ function bindLogin() {
     // 브라우저 저장소를 사용할 수 없어도 로그인은 계속 진행합니다.
   }
 
-  document.getElementById("loginForm").addEventListener("submit", async (event) => {
+  loginForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const error = document.getElementById("loginError");
     const button = event.target.querySelector('button[type="submit"]');
@@ -182,6 +279,39 @@ function bindLogin() {
       button.textContent = "로그인";
     }
   });
+  registerForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const error = document.getElementById("registerError");
+    const button = event.target.querySelector('button[type="submit"]');
+    const formData = new FormData(event.target);
+    const password = String(formData.get("password") || "");
+    error.textContent = "";
+    if (password !== String(formData.get("passwordConfirm") || "")) {
+      error.textContent = "비밀번호 확인이 일치하지 않습니다.";
+      return;
+    }
+    button.disabled = true;
+    button.textContent = "가입 중...";
+    try {
+      const employeeNo = String(formData.get("employeeNo") || "").trim();
+      const result = await apiJson("/api/auth/register", {
+        method: "POST",
+        body: JSON.stringify({
+          name: String(formData.get("name") || "").trim(),
+          employeeNo,
+          username: employeeNo,
+          email: String(formData.get("email") || "").trim(),
+          password
+        })
+      });
+      await startAuthenticatedApp(result.user);
+    } catch (err) {
+      error.textContent = err.message;
+    } finally {
+      button.disabled = false;
+      button.textContent = "가입하기";
+    }
+  });
 }
 
 async function checkLogin() {
@@ -196,15 +326,42 @@ async function checkLogin() {
 async function startAuthenticatedApp(user) {
   state.user = user;
   document.body.classList.add("is-authenticated");
+  renderCurrentUserSummary();
   await loadServerData();
-  render();
+  if (!applyRouteFromHash()) render({ replaceRoute: true });
 }
 
 function showLogin() {
   state.user = null;
   state.permissions = [];
   document.body.classList.remove("is-authenticated");
+  renderCurrentUserSummary();
   document.getElementById("loginPassword").value = "";
+  document.getElementById("loginForm")?.classList.remove("hidden");
+  document.getElementById("registerForm")?.classList.add("hidden");
+}
+
+function renderCurrentUserSummary() {
+  const summary = document.getElementById("userSummary");
+  const nameEl = document.getElementById("userSummaryName");
+  const orgEl = document.getElementById("userSummaryOrg");
+  if (!summary || !nameEl || !orgEl) return;
+  if (!state.user) {
+    summary.hidden = true;
+    nameEl.textContent = "";
+    orgEl.textContent = "";
+    return;
+  }
+  const displayName = state.user.displayName || state.user.username || "사용자";
+  const position = state.user.positionName || state.user.position || "";
+  nameEl.textContent = position ? `${displayName} ${position}` : displayName;
+  orgEl.textContent = formatUserSummaryOrganization(state.user.organizationName);
+  summary.hidden = false;
+}
+
+function formatUserSummaryOrganization(name) {
+  const text = String(name || "").trim();
+  return text ? text.replace(/\s+/g, "") : "조직 미지정";
 }
 
 function bindChrome() {
@@ -251,6 +408,7 @@ function emptyData() {
     documents: [],
     organizations: [],
     organizationContractLinks: [],
+    employees: [],
     users: []
   };
 }
@@ -267,6 +425,7 @@ async function loadServerData() {
       documents: data.documents || [],
       organizations: data.organizations || [],
       organizationContractLinks: data.organizationContractLinks || [],
+      employees: data.employees || [],
       users: data.users || []
     };
     state.permissions = data.permissions || [];
@@ -275,6 +434,7 @@ async function loadServerData() {
     if (hasPermission("menu.user.manage")) {
       const userData = await apiJson("/api/users");
       state.data.users = userData.users || [];
+      state.data.employees = userData.employees || state.data.employees || [];
     }
   } catch (error) {
     document.getElementById("view").innerHTML = `<div class="empty">서버 연결 실패: ${escapeHtml(error.message)}</div>`;
@@ -309,7 +469,7 @@ async function logout() {
   showLogin();
 }
 
-function render() {
+function render(options = {}) {
   const currentViewPermission = viewPermissions[state.view];
   if (currentViewPermission && !hasPermission(currentViewPermission)) state.view = "dashboard";
   document.querySelectorAll(".nav-item").forEach((button) => {
@@ -320,10 +480,10 @@ function render() {
     button.classList.toggle("active", button.dataset.view === state.view);
   });
   document.getElementById("viewTitle").textContent = state.selectedCompanyId ? "업체 상세" : viewTitles[state.view];
-  renderView();
+  renderView(options);
 }
 
-function renderView() {
+function renderView(options = {}) {
   const view = document.getElementById("view");
   const renderers = {
     dashboard: renderDashboard,
@@ -338,6 +498,7 @@ function renderView() {
   };
   view.innerHTML = state.selectedCompanyId ? renderCompanyDetail() : renderers[state.view]();
   bindViewEvents();
+  if (options.updateRoute !== false) updateRouteHash({ replace: Boolean(options.replaceRoute) });
 }
 
 function renderDashboard() {
@@ -417,6 +578,12 @@ function renderContactTable(company) {
 }
 
 function renderExcelActions(kind) {
+  if (kind === "employees") {
+    return `
+      <button type="button" class="ghost-button" data-excel-template="${kind}">직원 일괄등록 양식 내려받기</button>
+      ${state.user?.role === "admin" ? `<button type="button" class="secondary-button" data-excel-import="${kind}">직원 일괄등록</button>` : ""}
+    `;
+  }
   return `
     <button type="button" class="ghost-button" data-excel-template="${kind}">일괄 등록 양식 내려받기</button>
     ${state.user?.role === "admin" ? `<button type="button" class="secondary-button" data-excel-import="${kind}">일괄 등록</button>` : ""}
@@ -587,6 +754,7 @@ function updateListSearch(type, formData) {
   };
   if (type === "company") state.companySearch = next;
   if (type === "contract") state.contractSearch = next;
+  if (type === "employee") state.employeeSearch = next;
 }
 
 function renderWorklogs() {
@@ -662,7 +830,7 @@ function renderDocuments() {
     <div class="toolbar">
       <div class="toolbar-left"></div>
       <div class="toolbar-right">
-        ${hasPermission("menu.document.create") ? `<button class="primary-button" data-add="document"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>문서 등록</button>` : ""}
+        ${hasPermission("menu.document.create") ? `<button class="ghost-button" data-bulk-document><svg viewBox="0 0 24 24"><path d="M4 12h16M4 6h16M4 18h16"/></svg>문서 일괄등록</button><button class="primary-button" data-add="document"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>문서 등록</button>` : ""}
       </div>
     </div>
     ${docs.length ? `
@@ -814,6 +982,8 @@ function renderStats() {
 function renderUsers() {
   const allUsers = state.data.users || [];
   const { items: users } = paginatedItems("users", allUsers);
+  const filteredEmployees = filterEmployees(state.data.employees || []);
+  const { items: employees } = paginatedItems("employees", filteredEmployees);
   return `
     <div class="toolbar">
       <div class="toolbar-left"><span class="muted">로그인 계정을 관리합니다.</span></div>
@@ -822,11 +992,12 @@ function renderUsers() {
     ${users.length ? `
       <div class="table-wrap">
         <table>
-          <thead><tr><th>아이디</th><th>이름</th><th>이메일</th><th>조직</th><th>권한</th><th>상태</th><th>등록일</th><th></th></tr></thead>
+            <thead><tr><th>아이디</th><th>사원번호</th><th>이름</th><th>이메일</th><th>조직</th><th>권한</th><th>상태</th><th>등록일</th><th></th></tr></thead>
           <tbody>
             ${users.map((user) => `
               <tr>
                 <td><strong>${escapeHtml(user.username)}</strong></td>
+                <td>${escapeHtml(user.employeeNo || "-")}</td>
                 <td>${escapeHtml(user.displayName || "-")}</td>
                 <td>${escapeHtml(user.email || "-")}</td>
                 <td>${escapeHtml(user.organizationName || "-")}</td>
@@ -840,6 +1011,49 @@ function renderUsers() {
         </table>
       </div>` : empty("등록된 사용자가 없습니다.")}
     ${renderListPagination("users", allUsers.length)}
+    <section class="panel employee-panel">
+      <div class="panel-header">
+        <div>
+          <h2>직원 기준 정보</h2>
+          <p class="muted">회원가입 검증에 사용할 기준정보를 등록합니다.</p>
+        </div>
+        <div class="inline-actions">
+          ${renderExcelActions("employees")}
+          <button class="primary-button" data-add="employee"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>직원 등록</button>
+        </div>
+      </div>
+      ${renderListSearch("employee", "직원 기준정보 검색", [
+        ["all", "전체"],
+        ["employeeNo", "사원번호"],
+        ["name", "이름"],
+        ["department", "부서"],
+        ["position", "직급"],
+        ["status", "재직상태"],
+        ["email", "이메일"]
+      ], state.employeeSearch, `${filteredEmployees.length} / ${(state.data.employees || []).length}명`)}
+      ${employees.length ? `
+        <div class="table-wrap employee-table-wrap">
+          <table>
+            <thead><tr><th>사원번호</th><th>이름</th><th>재직상태</th><th>부서</th><th>직급</th><th>입사일</th><th>퇴사일</th><th>이메일</th><th></th></tr></thead>
+            <tbody>
+              ${employees.map((employee) => `
+                <tr>
+                  <td><strong>${escapeHtml(employee.employeeNo || "-")}</strong></td>
+                  <td>${escapeHtml(employee.name || "-")}</td>
+                  <td>${employeeStatusBadge(employee)}</td>
+                  <td>${escapeHtml(employee.departmentName || employee.organizationName || "-")}</td>
+                  <td>${escapeHtml(employee.positionName || "-")}</td>
+                  <td>${formatDate(employee.joinedAt)}</td>
+                  <td>${formatDate(employee.resignedAt)}</td>
+                  <td>${escapeHtml(employee.email || "-")}</td>
+                  <td><button class="row-action" data-edit="employee" data-id="${employee.id}">수정</button></td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>` : empty("검색 조건에 맞는 직원 기준정보가 없습니다.")}
+      ${renderListPagination("employees", filteredEmployees.length)}
+    </section>
   `;
 }
 
@@ -906,21 +1120,27 @@ function renderOrganizationContractLinkEditor(selected, organizations) {
     return `<div class="item-card" style="margin-top:16px"><h3>계약 담당부서 연계</h3><p class="muted">최상위 조직은 계약 담당부서 연계 대상에서 제외됩니다.</p></div>`;
   }
   const linkedIds = linkedContractOrganizationIds(selected.id);
-  const candidates = organizations.filter((org) => org.parentId && String(org.id) !== String(selected.id));
+  const candidates = organizations
+    .filter((org) => org.parentId && String(org.id) !== String(selected.id))
+    .sort((a, b) => {
+      const parentCompare = organizationName(a.parentId).localeCompare(organizationName(b.parentId), "ko");
+      return parentCompare || String(a.name).localeCompare(String(b.name), "ko");
+    });
   return `
-    <form class="item-card" style="margin-top:16px" data-org-link-form="${selected.id}">
-      <div class="panel-header">
+    <form class="item-card org-link-editor" data-org-link-form="${selected.id}">
+      <div class="org-link-header">
         <div>
           <h3>계약 담당부서 양방향 연계</h3>
           <p class="muted">선택한 조직끼리는 팀장·팀원이 양쪽 담당부서를 모두 선택할 수 있습니다.</p>
         </div>
         <button type="submit" class="primary-button">연계 저장</button>
       </div>
-      <div class="form-grid">
+      <div class="org-link-grid">
         ${candidates.map((org) => `
-          <label class="field" style="display:flex;align-items:center;gap:8px">
+          <label class="org-link-card ${linkedIds.has(String(org.id)) ? "is-linked" : ""}">
             <input type="checkbox" name="linkedOrganizationId" value="${org.id}" ${linkedIds.has(String(org.id)) ? "checked" : ""}>
-            <span>${escapeHtml(org.name)}</span>
+            <span class="org-link-name" title="${escapeHtml(org.name)}">${escapeHtml(org.name)}</span>
+            <span class="org-link-parent" title="${escapeHtml(organizationName(org.parentId) || "-")}">${escapeHtml(organizationName(org.parentId) || "-")}</span>
           </label>
         `).join("") || `<span class="muted">연계할 수 있는 조직이 없습니다.</span>`}
       </div>
@@ -1050,7 +1270,7 @@ function renderCompanyTab(company) {
   }
   if (state.selectedTab === "documents") {
     const docs = state.data.documents.filter((item) => item.companyId === company.id);
-    return `<div class="toolbar"><span></span>${hasPermission("menu.document.create") ? `<button class="primary-button" data-add="document" data-company="${company.id}"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>문서 등록</button>` : ""}</div>${renderDocumentCards(docs)}`;
+    return `<div class="toolbar"><span></span>${hasPermission("menu.document.create") ? `<div class="inline-actions"><button class="ghost-button" data-bulk-document data-company="${company.id}"><svg viewBox="0 0 24 24"><path d="M4 12h16M4 6h16M4 18h16"/></svg>문서 일괄등록</button><button class="primary-button" data-add="document" data-company="${company.id}"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>문서 등록</button></div>` : ""}</div>${renderDocumentCards(docs)}`;
   }
   return `<div class="item-card"><h3>메모</h3><p>${escapeHtml(company.memo || "등록된 메모가 없습니다.")}</p></div>`;
 }
@@ -1099,7 +1319,8 @@ function bindViewEvents() {
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       updateListSearch(form.dataset.listSearch, new FormData(form));
-      const pageType = form.dataset.listSearch === "company" ? "companies" : "contracts";
+      const pageMap = { company: "companies", contract: "contracts", employee: "employees" };
+      const pageType = pageMap[form.dataset.listSearch] || form.dataset.listSearch;
       state.listPages[pageType] = 1;
       renderView();
     });
@@ -1109,12 +1330,17 @@ function bindViewEvents() {
       const type = button.dataset.clearListSearch;
       if (type === "company") state.companySearch = { field: "all", query: "" };
       if (type === "contract") state.contractSearch = { field: "all", query: "" };
-      state.listPages[type === "company" ? "companies" : "contracts"] = 1;
+      if (type === "employee") state.employeeSearch = { field: "all", query: "" };
+      const pageMap = { company: "companies", contract: "contracts", employee: "employees" };
+      state.listPages[pageMap[type] || type] = 1;
       renderView();
     });
   });
   document.querySelectorAll("[data-add]").forEach((button) => {
     button.addEventListener("click", () => openModal(button.dataset.add, null, button.dataset.company));
+  });
+  document.querySelectorAll("[data-bulk-document]").forEach((button) => {
+    button.addEventListener("click", () => openDocumentBulkModal(button.dataset.company));
   });
   document.querySelectorAll("[data-edit]").forEach((button) => {
     button.addEventListener("click", () => openModal(button.dataset.edit, button.dataset.id));
@@ -1148,6 +1374,11 @@ function bindViewEvents() {
     button.addEventListener("click", () => deleteOrganization(button.dataset.deleteOrganization));
   });
   document.querySelectorAll("[data-org-link-form]").forEach((form) => {
+    form.querySelectorAll('input[name="linkedOrganizationId"]').forEach((checkbox) => {
+      checkbox.addEventListener("change", () => {
+        checkbox.closest(".org-link-card")?.classList.toggle("is-linked", checkbox.checked);
+      });
+    });
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const button = form.querySelector('button[type="submit"]');
@@ -1271,6 +1502,19 @@ function openModal(type, id = null, companyId = null) {
   }
 }
 
+function openDocumentBulkModal(companyId = null) {
+  const defaults = defaultItem("document", companyId || state.selectedCompanyId);
+  state.modal = { type: "documentBulk", id: null, saving: false };
+  document.getElementById("modalTitle").textContent = "문서 일괄등록";
+  document.getElementById("modalBody").innerHTML = renderDocumentBulkForm(defaults);
+  document.getElementById("deleteBtn").style.display = "none";
+  setModalBusy(false);
+  document.getElementById("modalBackdrop").classList.remove("hidden");
+  bindSelectSearchFields();
+  bindOrganizationPickers();
+  bindDocumentBulkFiles();
+}
+
 function closeModal() {
   state.modal = null;
   setModalBusy(false);
@@ -1286,6 +1530,7 @@ function canDelete(type) {
     asset: "menu.asset.delete",
     worklog: "menu.worklog.delete",
     document: "menu.document.delete",
+    employee: "menu.user.manage",
     user: "menu.user.manage",
     organization: "menu.organization.manage"
   };
@@ -1299,7 +1544,9 @@ async function saveModal(event) {
   setModalBusy(true);
   const { type, id } = state.modal;
   const collection = collectionFor(type);
-  const fields = fieldsFor(type);
+  const fields = type === "documentBulk"
+    ? documentFields.filter(([key]) => key !== "title" && key !== "file")
+    : fieldsFor(type);
   const formData = new FormData(event.target);
   const item = id ? { ...state.data[collection].find((entry) => String(entry.id) === String(id)) } : {};
 
@@ -1325,6 +1572,35 @@ async function saveModal(event) {
   }
 
   try {
+    if (type === "documentBulk") {
+      const bulkForm = new FormData();
+      bulkForm.append("companyId", item.companyId || "");
+      bulkForm.append("contractId", item.contractId || "");
+      bulkForm.append("organizationId", item.organizationId || "");
+      bulkForm.append("category", item.category || "contract");
+      bulkForm.append("memo", item.memo || "");
+      const fileInput = document.getElementById("bulkFiles");
+      const files = [...(fileInput?.files || [])];
+      if (!files.length) {
+        throw new Error("업로드할 파일을 선택해 주세요.");
+      }
+      files.forEach((file) => bulkForm.append("files", file));
+      document.querySelectorAll("[data-bulk-file-category]").forEach((select) => {
+        bulkForm.append("categories", select.value || item.category || "contract");
+      });
+      const result = await apiJson("/api/documents/bulk", {
+        method: "POST",
+        body: bulkForm
+      });
+      showDocumentBulkResult(result);
+      await loadServerData();
+      if (state.modal) {
+        state.modal.saving = false;
+        setModalBusy(false);
+      }
+      render();
+      return;
+    }
     if (type === "document") {
       const documentForm = new FormData();
       documentForm.append("companyId", item.companyId || "");
@@ -1357,6 +1633,17 @@ async function saveModal(event) {
       setModalBusy(false);
     }
   }
+}
+
+function showDocumentBulkResult(result) {
+  const box = document.querySelector("[data-bulk-upload-result]");
+  if (!box) return;
+  const errors = Array.isArray(result.errors) ? result.errors : [];
+  box.hidden = false;
+  box.innerHTML = `
+    <strong>등록 결과: 성공 ${Number(result.created || 0)}건 / 실패 ${Number(result.failed || 0)}건</strong>
+    ${errors.length ? `<ul>${errors.map((item) => `<li>${escapeHtml(item.fileName || "파일")} - ${escapeHtml(item.error || "실패")}</li>`).join("")}</ul>` : `<span>선택한 파일이 정상 등록되었습니다.</span>`}
+  `;
 }
 
 function setModalBusy(isBusy) {
@@ -1414,6 +1701,69 @@ function renderForm(type, item) {
     const worklogContractRequired = type === "worklog" && key === "contractId" && !hasFullAccess();
     return renderField(key, labelText, inputType, item, required || worklogContractRequired);
   }).join("")}${passwordPanel}</div>${contactsPanel}`;
+}
+
+function renderDocumentBulkForm(item) {
+  const commonFields = documentFields.filter(([key]) => key !== "title" && key !== "file");
+  return `
+    <div class="bulk-upload-note">
+      <strong>여러 파일을 같은 업체/계약에 한 번에 등록합니다.</strong>
+      <span class="muted">문서명은 파일명에서 확장자를 뺀 이름으로 자동 저장됩니다.</span>
+    </div>
+    <div class="form-grid">
+      ${commonFields.map(([key, labelText, inputType, required]) => renderField(key, labelText, inputType, item, required)).join("")}
+      <div class="field-wide">
+        <label for="bulkFiles">파일 선택</label>
+        <input id="bulkFiles" name="files" type="file" multiple required>
+        <span class="muted">여러 파일을 한 번에 선택할 수 있습니다. 최대 100개까지 등록합니다.</span>
+      </div>
+      <div class="field-wide">
+        <div class="bulk-file-list" data-bulk-file-list>
+          <span class="muted">선택된 파일이 없습니다.</span>
+        </div>
+      </div>
+      <div class="field-wide bulk-upload-result" data-bulk-upload-result hidden></div>
+    </div>
+  `;
+}
+
+function bindDocumentBulkFiles() {
+  const input = document.getElementById("bulkFiles");
+  const list = document.querySelector("[data-bulk-file-list]");
+  if (!input || !list) return;
+  input.addEventListener("change", () => {
+    const files = [...(input.files || [])];
+    const defaultCategory = document.getElementById("category")?.value || "contract";
+    if (!files.length) {
+      list.innerHTML = `<span class="muted">선택된 파일이 없습니다.</span>`;
+      return;
+    }
+    list.innerHTML = `
+      <div class="bulk-file-summary">총 ${files.length}개 파일 선택</div>
+      <ul>
+        ${files.map((file, index) => `
+          <li>
+            <span>${escapeHtml(file.name)}</span>
+            <select data-bulk-file-category="${index}" aria-label="${escapeHtml(file.name)} 문서구분">
+              ${renderDocCategoryOptions(defaultCategory)}
+            </select>
+            <em>${formatFileSize(file.size)}</em>
+          </li>
+        `).join("")}
+      </ul>
+    `;
+  });
+}
+
+function renderDocCategoryOptions(selected) {
+  return options("docCategory").map(([id, name]) => `<option value="${id}" ${selected === id ? "selected" : ""}>${name}</option>`).join("");
+}
+
+function formatFileSize(size) {
+  const number = Number(size || 0);
+  if (number >= 1024 * 1024) return `${(number / 1024 / 1024).toFixed(1)} MB`;
+  if (number >= 1024) return `${Math.round(number / 1024)} KB`;
+  return `${number} B`;
 }
 
 function renderUserPasswordChangePanel() {
@@ -1794,6 +2144,14 @@ function renderField(key, labelText, inputType, item, required) {
     const fallback = item.manager && !value ? `<span class="muted">기존 담당자: ${escapeHtml(item.manager)}</span>` : "";
     return `<div class="${wide}">${base}<input class="select-search-input" type="search" placeholder="사용자명, 이메일, 부서 검색" data-select-search-for="${key}" data-select-search-total="${users.length}" data-select-search-unit="명" autocomplete="off"><select id="${key}" name="${key}" ${req}><option value="">선택 안 함</option>${fallbackOption}${userOptions}</select><span class="muted select-search-result" data-select-search-result-for="${key}">총 ${users.length}명</span>${fallback}</div>`;
   }
+  if (inputType === "employee") {
+    const employees = state.data.employees || [];
+    const employeeOptions = employees.map((employee) => {
+      const searchText = `${employee.employeeNo || ""} ${employee.name || ""} ${employee.email || ""}`;
+      return `<option value="${employee.id}" data-search-text="${escapeHtml(searchText)}" ${String(value) === String(employee.id) ? "selected" : ""}>${escapeHtml(`${employee.employeeNo} / ${employee.name}`)}</option>`;
+    }).join("");
+    return `<div class="${wide}">${base}<input class="select-search-input" type="search" placeholder="사원번호, 이름, 이메일 검색" data-select-search-for="${key}" data-select-search-total="${employees.length}" data-select-search-unit="명" autocomplete="off"><select id="${key}" name="${key}" ${req}><option value="">연결 안 함</option>${employeeOptions}</select><span class="muted select-search-result" data-select-search-result-for="${key}">총 ${employees.length}명</span></div>`;
+  }
   if (inputType === "organization") {
     const pickerOptions = state.modal?.type === "contract"
       ? contractOrganizationPickerOptions()
@@ -1804,7 +2162,7 @@ function renderField(key, labelText, inputType, item, required) {
     const currentId = item.id || state.modal?.id || "";
     return renderOrganizationPicker(key, labelText, value, required, { emptyLabel: "최상위 조직", excludeId: currentId });
   }
-  if (inputType === "billing" || inputType === "contractStatus" || inputType === "pendingStatus" || inputType === "assetType" || inputType === "workCategory" || inputType === "workStatus" || inputType === "docCategory" || inputType === "userRole") {
+  if (inputType === "billing" || inputType === "contractStatus" || inputType === "pendingStatus" || inputType === "assetType" || inputType === "workCategory" || inputType === "workStatus" || inputType === "docCategory" || inputType === "userRole" || inputType === "employmentStatus") {
     return `<div class="${wide}">${base}<select id="${key}" name="${key}" ${req}>${options(inputType).map(([id, name]) => `<option value="${id}" ${value === id ? "selected" : ""}>${name}</option>`).join("")}</select></div>`;
   }
   if (inputType === "checkbox") {
@@ -2146,6 +2504,7 @@ function defaultItem(type, companyId) {
     asset: { companyId: companyId || state.data.companies[0]?.id || "", type: "equipment" },
     worklog: { companyId: companyId || state.data.companies[0]?.id || "", date: today, category: "visit", status: "done" },
     document: { companyId: companyId || state.data.companies[0]?.id || "", organizationId: state.user?.organizationId || state.data.organizations[0]?.id || "", category: "contract" },
+    employee: { employmentStatus: "active", joinedAt: today, resignedAt: today },
     user: { role: "team_member", isActive: true, organizationId: state.data.organizations[0]?.id || "" },
     organization: { parentId: "", sortOrder: state.data.organizations.length + 1, isActive: true }
   };
@@ -2153,19 +2512,19 @@ function defaultItem(type, companyId) {
 }
 
 function fieldsFor(type) {
-  return { company: companyFields, contract: contractFields, pending: pendingFields, asset: assetFields, worklog: worklogFields, document: documentFields, user: userFields, organization: organizationFields }[type];
+  return { company: companyFields, contract: contractFields, pending: pendingFields, asset: assetFields, worklog: worklogFields, document: documentFields, employee: employeeFields, user: userFields, organization: organizationFields }[type];
 }
 
 function collectionFor(type) {
-  return { company: "companies", contract: "contracts", pending: "pendingItems", asset: "assets", worklog: "worklogs", document: "documents", user: "users", organization: "organizations" }[type];
+  return { company: "companies", contract: "contracts", pending: "pendingItems", asset: "assets", worklog: "worklogs", document: "documents", employee: "employees", user: "users", organization: "organizations" }[type];
 }
 
 function apiPath(type) {
-  return { company: "/api/companies", contract: "/api/contracts", pending: "/api/pending-items", asset: "/api/assets", worklog: "/api/worklogs", document: "/api/documents", user: "/api/users", organization: "/api/organizations" }[type];
+  return { company: "/api/companies", contract: "/api/contracts", pending: "/api/pending-items", asset: "/api/assets", worklog: "/api/worklogs", document: "/api/documents", employee: "/api/employees", user: "/api/users", organization: "/api/organizations" }[type];
 }
 
 function modalName(type) {
-  return { company: "업체", contract: "계약", pending: "미결 내역", asset: "유지보수 대상", worklog: "작업 이력", document: "문서", user: "사용자", organization: "조직" }[type];
+  return { company: "업체", contract: "계약", pending: "미결 내역", asset: "유지보수 대상", worklog: "작업 이력", document: "문서", employee: "직원 기준 정보", user: "사용자", organization: "조직" }[type];
 }
 
 function options(type) {
@@ -2177,7 +2536,8 @@ function options(type) {
     workCategory: [["visit", "방문 점검"], ["remote", "원격지원"], ["incident", "장애 처리"], ["part", "부품 교체"], ["regular", "정기점검"]],
     workStatus: [["open", "접수"], ["progress", "처리중"], ["done", "완료"], ["hold", "보류"]],
     docCategory: [["contract", "계약서"], ["estimate", "견적서"], ["license", "사업자등록증"], ["report", "점검보고서"], ["photo", "사진"], ["other", "기타"]],
-    userRole: [["admin", "관리자"], ["manager", "매니저"], ["team_lead", "팀장"], ["team_member", "팀원"]]
+    userRole: [["admin", "관리자"], ["manager", "매니저"], ["team_lead", "팀장"], ["team_member", "팀원"]],
+    employmentStatus: [["active", "재직"], ["resigned", "퇴사"], ["leave", "휴직"]]
   };
   return maps[type] || [];
 }
@@ -2236,6 +2596,16 @@ function workStatusBadge(status) {
 function pendingStatusBadge(status) {
   const classes = { open: "pending", progress: "pending", done: "active", hold: "closed" };
   return `<span class="status status-${classes[status] || "closed"}">${label("pendingStatus", status)}</span>`;
+}
+
+function employeeStatusBadge(employee) {
+  if (!employee.isActive || employee.employmentStatus === "resigned") {
+    return `<span class="status status-closed">퇴사</span>`;
+  }
+  if (employee.employmentStatus === "leave") {
+    return `<span class="status status-pending">휴직</span>`;
+  }
+  return `<span class="status status-active">재직</span>`;
 }
 
 function filterItems(items, keys) {
@@ -2297,6 +2667,39 @@ function searchValuesForContract(contract, field) {
       contract.managerUserEmail,
       companyName(contract.companyId),
       contract.memo
+    ]
+  };
+  return values[field] || values.all;
+}
+
+function filterEmployees(employees) {
+  const query = state.employeeSearch.query.trim().toLowerCase();
+  if (!query) return employees;
+  return employees.filter((employee) => searchValuesForEmployee(employee, state.employeeSearch.field)
+    .some((value) => String(value || "").toLowerCase().includes(query)));
+}
+
+function searchValuesForEmployee(employee, field) {
+  const statusText = label("employmentStatus", employee.employmentStatus);
+  const department = employee.departmentName || employee.organizationName;
+  const values = {
+    employeeNo: [employee.employeeNo],
+    name: [employee.name],
+    department: [department, employee.departmentParentName, employee.organizationName],
+    position: [employee.positionName],
+    status: [employee.employmentStatus, statusText],
+    email: [employee.email],
+    all: [
+      employee.employeeNo,
+      employee.name,
+      employee.email,
+      employee.memo,
+      employee.employmentStatus,
+      statusText,
+      department,
+      employee.departmentParentName,
+      employee.organizationName,
+      employee.positionName
     ]
   };
   return values[field] || values.all;

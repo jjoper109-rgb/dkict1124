@@ -229,6 +229,31 @@ def clean_filename(name: str) -> str:
     return f"{stem[:80]}{suffix[:20]}"
 
 
+def normalize_organization_name(value: str) -> str:
+    return re.sub(r"[\s\-_·.]+", "", str(value or "").strip().lower())
+
+
+def department_organization_candidates(parent_name: str, department_name: str) -> list[str]:
+    candidates: list[str] = []
+    department = str(department_name or "").strip()
+    parent = str(parent_name or "").strip()
+    if department:
+        candidates.append(department)
+        match = re.match(r"^(.+)\((하남|평동)\)$", department)
+        if match:
+            candidates.append(f"{match.group(2).strip()} {match.group(1).strip()}")
+    if parent:
+        candidates.append(parent)
+    result: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = normalize_organization_name(candidate)
+        if key and key not in seen:
+            result.append(candidate)
+            seen.add(key)
+    return result
+
+
 def row_to_client(row: dict[str, Any]) -> dict[str, Any]:
     converted: dict[str, Any] = {}
     aliases = {
@@ -243,6 +268,9 @@ def row_to_client(row: dict[str, Any]) -> dict[str, Any]:
         "organization_id": "organizationId",
         "organization_name": "organizationName",
         "user_id": "userId",
+        "employee_id": "employeeId",
+        "employee_no": "employeeNo",
+        "employment_status": "employmentStatus",
         "parent_id": "parentId",
         "sort_order": "sortOrder",
         "is_active": "isActive",
@@ -641,6 +669,17 @@ def verify_password(password: str, stored: str) -> bool:
         return False
 
 
+def validate_signup_password(password: str) -> None:
+    if len(password) < 6 or len(password) >= 12:
+        raise HTTPException(status_code=400, detail="비밀번호는 6자리 이상 12자리 미만이어야 합니다.")
+    if not re.search(r"[A-Za-z]", password):
+        raise HTTPException(status_code=400, detail="비밀번호에는 영문이 포함되어야 합니다.")
+    if not re.search(r"[^A-Za-z0-9]", password):
+        raise HTTPException(status_code=400, detail="비밀번호에는 특수문자가 포함되어야 합니다.")
+    if re.search(r"\s", password):
+        raise HTTPException(status_code=400, detail="비밀번호에는 공백을 사용할 수 없습니다.")
+
+
 def seed_organizations(cur) -> None:
     cur.execute("SELECT 1 FROM app.organizations WHERE is_active = TRUE LIMIT 1")
     if cur.fetchone():
@@ -719,6 +758,56 @@ def init_auth_schema() -> None:
             )
             cur.execute("ALTER TABLE app.app_users ADD COLUMN IF NOT EXISTS organization_id BIGINT REFERENCES app.organizations(id) ON DELETE SET NULL")
             cur.execute("ALTER TABLE app.app_users ADD COLUMN IF NOT EXISTS email TEXT")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app.employee_master (
+                    id BIGSERIAL PRIMARY KEY,
+                    employee_no TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    department_code TEXT,
+                    position_code TEXT,
+                    organization_id BIGINT REFERENCES app.organizations(id) ON DELETE SET NULL,
+                    position TEXT,
+                    email TEXT,
+                    phone TEXT,
+                    employment_status TEXT NOT NULL DEFAULT 'active',
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    joined_at DATE,
+                    resigned_at DATE,
+                    memo TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMP NOT NULL DEFAULT now()
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app.employee_departments (
+                    code TEXT PRIMARY KEY,
+                    parent_name TEXT,
+                    name TEXT NOT NULL,
+                    raw_name TEXT,
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMP NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMP NOT NULL DEFAULT now()
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app.employee_positions (
+                    code TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMP NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMP NOT NULL DEFAULT now()
+                )
+                """
+            )
+            cur.execute("ALTER TABLE app.app_users ADD COLUMN IF NOT EXISTS employee_id BIGINT REFERENCES app.employee_master(id) ON DELETE SET NULL")
+            cur.execute("ALTER TABLE app.employee_master DROP CONSTRAINT IF EXISTS employee_master_employee_no_key")
+            cur.execute("ALTER TABLE app.employee_master ADD COLUMN IF NOT EXISTS department_code TEXT")
+            cur.execute("ALTER TABLE app.employee_master ADD COLUMN IF NOT EXISTS position_code TEXT")
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS app.company_profiles (
@@ -849,6 +938,13 @@ def init_auth_schema() -> None:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_pending_items_company ON app.pending_items (company_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_pending_items_contract ON app.pending_items (contract_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_app_users_organization ON app.app_users (organization_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_app_users_employee ON app.app_users (employee_id)")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_employee_unique ON app.app_users (employee_id) WHERE employee_id IS NOT NULL")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_employee_master_organization ON app.employee_master (organization_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_employee_master_status ON app.employee_master (employment_status, is_active)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_employee_master_department_code ON app.employee_master (department_code)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_employee_master_position_code ON app.employee_master (position_code)")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_employee_master_no_name_unique ON app.employee_master (employee_no, name)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_company_organizations_org ON app.company_organizations (organization_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_contract_organizations_org ON app.contract_organizations (organization_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_org_contract_links_a ON app.organization_contract_links (organization_a_id) WHERE is_active = TRUE")
@@ -964,15 +1060,60 @@ def client_user(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": str(row["id"]),
         "username": row["username"],
+        "employeeId": "" if row.get("employee_id") is None else str(row.get("employee_id")),
+        "employeeNo": row.get("employee_no") or "",
         "displayName": row.get("display_name") or "",
         "email": row.get("email") or "",
         "role": row.get("role") or "staff",
+        "positionName": row.get("position_name") or row.get("position") or "",
+        "position": row.get("position_name") or row.get("position") or "",
         "organizationId": "" if row.get("organization_id") is None else str(row.get("organization_id")),
         "organizationName": row.get("organization_name") or "",
         "isActive": bool(row.get("is_active")),
         "createdAt": row.get("created_at").isoformat() if row.get("created_at") else "",
         "updatedAt": row.get("updated_at").isoformat() if row.get("updated_at") else "",
     }
+
+
+def resolve_employee_organization_id(cur, employee: dict[str, Any]) -> int | None:
+    if employee.get("organization_id"):
+        return int(employee["organization_id"])
+    cur.execute(
+        """
+        SELECT d.parent_name, d.name
+        FROM app.employee_departments d
+        WHERE d.code = %s
+        """,
+        (employee.get("department_code"),),
+    )
+    department = cur.fetchone() or {}
+    names = department_organization_candidates(department.get("parent_name"), department.get("name"))
+    for name in names:
+        if not name:
+            continue
+        cur.execute("SELECT id FROM app.organizations WHERE is_active = TRUE AND name = %s LIMIT 1", (name,))
+        row = cur.fetchone()
+        if row:
+            return int(row["id"])
+    for name in names:
+        key = normalize_organization_name(name)
+        if not key:
+            continue
+        cur.execute(
+            """
+            SELECT id
+            FROM app.organizations
+            WHERE is_active = TRUE
+              AND regexp_replace(lower(name), '[\\s\\-_·.]+', '', 'g') = %s
+            ORDER BY id
+            LIMIT 2
+            """,
+            (key,),
+        )
+        rows = cur.fetchall()
+        if len(rows) == 1:
+            return int(rows[0]["id"])
+    return None
 
 
 def fetch_organizations() -> list[dict[str, Any]]:
@@ -1139,13 +1280,59 @@ def fetch_users_for_admin() -> list[dict[str, Any]]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT u.*, o.name AS organization_name
+                SELECT u.*, o.name AS organization_name, e.employee_no,
+                       p.name AS position_name, e.position
                 FROM app.app_users u
                 LEFT JOIN app.organizations o ON o.id = u.organization_id
+                LEFT JOIN app.employee_master e ON e.id = u.employee_id
+                LEFT JOIN app.employee_positions p ON p.code = e.position_code
                 ORDER BY u.id
                 """
             )
             return [client_user(row) for row in cur.fetchall()]
+
+
+def client_employee(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(row["id"]),
+        "employeeNo": row.get("employee_no") or "",
+        "name": row.get("name") or "",
+        "departmentCode": row.get("department_code") or "",
+        "departmentParentName": row.get("department_parent_name") or "",
+        "departmentName": row.get("department_name") or "",
+        "positionCode": row.get("position_code") or "",
+        "positionName": row.get("position_name") or row.get("position") or "",
+        "organizationId": "" if row.get("organization_id") is None else str(row.get("organization_id")),
+        "organizationName": row.get("organization_name") or "",
+        "position": row.get("position_name") or row.get("position") or "",
+        "email": row.get("email") or "",
+        "phone": row.get("phone") or "",
+        "employmentStatus": row.get("employment_status") or "active",
+        "isActive": bool(row.get("is_active")),
+        "joinedAt": row.get("joined_at").isoformat() if row.get("joined_at") else "",
+        "resignedAt": row.get("resigned_at").isoformat() if row.get("resigned_at") else "",
+        "memo": row.get("memo") or "",
+        "createdAt": row.get("created_at").isoformat() if row.get("created_at") else "",
+        "updatedAt": row.get("updated_at").isoformat() if row.get("updated_at") else "",
+    }
+
+
+def fetch_employees() -> list[dict[str, Any]]:
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT e.*, o.name AS organization_name,
+                       d.parent_name AS department_parent_name, d.name AS department_name,
+                       p.name AS position_name
+                FROM app.employee_master e
+                LEFT JOIN app.organizations o ON o.id = e.organization_id
+                LEFT JOIN app.employee_departments d ON d.code = e.department_code
+                LEFT JOIN app.employee_positions p ON p.code = e.position_code
+                ORDER BY e.is_active DESC, e.employee_no, e.id
+                """
+            )
+            return [client_employee(row) for row in cur.fetchall()]
 
 
 def fetch_selectable_users(user: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1164,10 +1351,14 @@ def fetch_selectable_users(user: dict[str, Any]) -> list[dict[str, Any]]:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT u.*, o.name AS organization_name
+                SELECT u.*, o.name AS organization_name, e.employee_no,
+                       p.name AS position_name, e.position
                 FROM app.app_users u
                 LEFT JOIN app.organizations o ON o.id = u.organization_id
+                LEFT JOIN app.employee_master e ON e.id = u.employee_id
+                LEFT JOIN app.employee_positions p ON p.code = e.position_code
                 {where_sql}
+                  AND (u.employee_id IS NULL OR (e.is_active = TRUE AND e.employment_status = 'active'))
                 ORDER BY o.name NULLS LAST, u.display_name NULLS LAST, u.username
                 """,
                 params,
@@ -1183,10 +1374,14 @@ def current_user_full(request: Request) -> dict[str, Any]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT u.*, o.name AS organization_name
+                SELECT u.*, o.name AS organization_name, e.employee_no,
+                       p.name AS position_name, e.position
                 FROM app.app_users u
                 LEFT JOIN app.organizations o ON o.id = u.organization_id
+                LEFT JOIN app.employee_master e ON e.id = u.employee_id
+                LEFT JOIN app.employee_positions p ON p.code = e.position_code
                 WHERE u.id = %s AND u.is_active = TRUE
+                  AND (u.employee_id IS NULL OR (e.is_active = TRUE AND e.employment_status = 'active'))
                 """,
                 (user["id"],),
             )
@@ -1265,6 +1460,12 @@ EXCEL_TEMPLATES = {
         "headers": ["업체사업자번호", "업체명", "계약명", "작업일", "작업구분", "처리상태", "처리자", "제목", "작업내용"],
         "guides": ["작업일은 YYYY-MM-DD 형식으로 입력합니다.", "작업구분: 방문 점검, 원격지원, 장애 처리, 부품 교체, 정기점검", "처리상태: 접수, 처리중, 완료, 보류", "업체와 계약은 기존 등록 데이터와 일치해야 합니다."],
     },
+    "employees": {
+        "filename": "직원_일괄등록_양식.xlsx",
+        "permission": "menu.user.manage",
+        "headers": ["사원번호", "이름", "재직상태", "입사일", "퇴사일", "이메일", "비고", "부서코드", "1번부서", "2번부서", "직급코드", "직급"],
+        "guides": ["필수: 사원번호, 이름, 재직상태, 입사일, 퇴사일", "선택: 이메일, 비고, 부서코드, 1번부서, 2번부서, 직급코드, 직급", "부서/직급 값은 별도 DB 테이블에 저장됩니다.", "재직상태: 재직, 퇴사, 휴직", "날짜는 YYYY-MM-DD 형식으로 입력합니다."],
+    },
 }
 
 
@@ -1310,6 +1511,39 @@ def csv_company(row: dict[str, str]) -> dict[str, Any]:
         "email": row.get("담당자이메일", ""),
         "memo": row.get("비고", ""),
     }
+
+
+def csv_employee(row: dict[str, str], refs: dict[str, Any]) -> dict[str, Any]:
+    status_map = {"재직": "active", "퇴사": "resigned", "휴직": "leave", "active": "active", "resigned": "resigned", "leave": "leave"}
+    organization_id = resolve_csv_employee_organization_id(row, refs)
+    return {
+        "employeeNo": row.get("사원번호", ""),
+        "name": row.get("이름", ""),
+        "employmentStatus": status_map.get(row.get("재직상태", ""), row.get("재직상태", "") or "active"),
+        "isActive": status_map.get(row.get("재직상태", ""), row.get("재직상태", "") or "active") == "active",
+        "joinedAt": row.get("입사일", ""),
+        "resignedAt": row.get("퇴사일", ""),
+        "email": row.get("이메일", ""),
+        "memo": row.get("비고", ""),
+        "departmentCode": row.get("부서코드", ""),
+        "departmentParentName": row.get("1번부서", ""),
+        "departmentName": row.get("2번부서", ""),
+        "positionCode": row.get("직급코드", ""),
+        "positionName": row.get("직급", ""),
+        "organizationId": organization_id,
+    }
+
+
+def resolve_csv_employee_organization_id(row: dict[str, str], refs: dict[str, Any]) -> int | None:
+    names = department_organization_candidates(row.get("1번부서", ""), row.get("2번부서", ""))
+    for name in names:
+        if name and name in refs["organizations_by_name"]:
+            return refs["organizations_by_name"][name]
+    for name in names:
+        key = normalize_organization_name(name)
+        if key and key in refs["organizations_by_normalized_name"]:
+            return refs["organizations_by_normalized_name"][key]
+    return None
 
 
 def find_csv_company(row: dict[str, str], refs: dict[str, Any]) -> dict[str, Any] | None:
@@ -1727,7 +1961,7 @@ def start_mail_scheduler() -> None:
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    allow_paths = {"/api/health", "/api/auth/login", "/api/auth/me", "/api/auth/logout"}
+    allow_paths = {"/api/health", "/api/auth/login", "/api/auth/me", "/api/auth/logout", "/api/auth/register", "/api/auth/register/check"}
     if request.url.path.startswith("/api/") and request.url.path not in allow_paths:
         user = read_session(request.cookies.get(SESSION_COOKIE))
         if not user:
@@ -1746,16 +1980,147 @@ def login(payload: dict[str, Any], response: Response) -> dict[str, Any]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT u.*, o.name AS organization_name
+                SELECT u.*, o.name AS organization_name, e.employee_no,
+                       p.name AS position_name, e.position
                 FROM app.app_users u
                 LEFT JOIN app.organizations o ON o.id = u.organization_id
+                LEFT JOIN app.employee_master e ON e.id = u.employee_id
+                LEFT JOIN app.employee_positions p ON p.code = e.position_code
                 WHERE u.username = %s AND u.is_active = TRUE
+                  AND (u.employee_id IS NULL OR (e.is_active = TRUE AND e.employment_status = 'active'))
                 """,
                 (username,),
             )
             user = cur.fetchone()
     if not user or not verify_password(password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
+    response.set_cookie(
+        SESSION_COOKIE,
+        sign_session(int(user["id"]), user["username"], user["role"]),
+        httponly=True,
+        samesite="lax",
+    )
+    return {"user": client_user(user)}
+
+
+@app.post("/api/auth/register/check")
+def register_check(payload: dict[str, Any]) -> dict[str, Any]:
+    name = str(payload.get("name") or "").strip()
+    employee_no = str(payload.get("employeeNo") or "").strip()
+    if not name or not employee_no:
+        raise HTTPException(status_code=400, detail="이름과 사원번호를 입력해 주세요.")
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT e.*, o.name AS organization_name, u.id AS user_id,
+                       p.name AS position_name, e.position
+                FROM app.employee_master e
+                LEFT JOIN app.organizations o ON o.id = e.organization_id
+                LEFT JOIN app.app_users u ON u.employee_id = e.id
+                LEFT JOIN app.employee_positions p ON p.code = e.position_code
+                WHERE e.employee_no = %s AND e.name = %s
+                """,
+                (employee_no, name),
+            )
+            employee = cur.fetchone()
+    if not employee:
+        raise HTTPException(status_code=404, detail="직원 기준정보와 일치하지 않습니다.")
+    if not employee.get("is_active") or employee.get("employment_status") != "active":
+        raise HTTPException(status_code=403, detail="재직 중인 직원만 가입할 수 있습니다.")
+    if employee.get("user_id"):
+        raise HTTPException(status_code=409, detail="이미 가입된 직원입니다.")
+    return {
+        "ok": True,
+        "employee": {
+            "employeeNo": employee.get("employee_no") or "",
+            "name": employee.get("name") or "",
+            "organizationName": employee.get("organization_name") or "",
+            "email": employee.get("email") or "",
+        },
+    }
+
+
+@app.post("/api/auth/register")
+def register(payload: dict[str, Any], response: Response) -> dict[str, Any]:
+    name = str(payload.get("name") or "").strip()
+    employee_no = str(payload.get("employeeNo") or "").strip()
+    username = employee_no
+    email = str(payload.get("email") or "").strip()
+    password = str(payload.get("password") or "")
+    if not name or not employee_no or not password:
+        raise HTTPException(status_code=400, detail="이름, 사원번호, 비밀번호는 필수입니다.")
+    if not re.match(r"^[A-Za-z0-9_.-]{3,30}$", username):
+        raise HTTPException(status_code=400, detail="사원번호는 영문, 숫자, ., _, - 조합 3~30자로 입력해 주세요.")
+    if email and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise HTTPException(status_code=400, detail="이메일 형식이 올바르지 않습니다.")
+    validate_signup_password(password)
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT e.*, o.name AS organization_name, u.id AS user_id,
+                       p.name AS position_name, e.position
+                FROM app.employee_master e
+                LEFT JOIN app.organizations o ON o.id = e.organization_id
+                LEFT JOIN app.app_users u ON u.employee_id = e.id
+                LEFT JOIN app.employee_positions p ON p.code = e.position_code
+                WHERE e.employee_no = %s AND e.name = %s
+                FOR UPDATE OF e
+                """,
+                (employee_no, name),
+            )
+            employee = cur.fetchone()
+            if not employee:
+                raise HTTPException(status_code=404, detail="직원 기준정보와 일치하지 않습니다.")
+            if not employee.get("is_active") or employee.get("employment_status") != "active":
+                raise HTTPException(status_code=403, detail="재직 중인 직원만 가입할 수 있습니다.")
+            if employee.get("user_id"):
+                raise HTTPException(status_code=409, detail="이미 가입된 직원입니다.")
+            cur.execute("SELECT 1 FROM app.app_users WHERE username = %s", (username,))
+            if cur.fetchone():
+                raise HTTPException(status_code=409, detail="이미 사용 중인 아이디입니다.")
+            organization_id = resolve_employee_organization_id(cur, employee)
+            if organization_id and organization_id != employee.get("organization_id"):
+                cur.execute(
+                    "UPDATE app.employee_master SET organization_id = %s, updated_at = now() WHERE id = %s",
+                    (organization_id, employee["id"]),
+                )
+            if email and not employee.get("email"):
+                cur.execute(
+                    "UPDATE app.employee_master SET email = %s, updated_at = now() WHERE id = %s",
+                    (email, employee["id"]),
+                )
+            cur.execute(
+                """
+                INSERT INTO app.app_users
+                    (username, password_hash, display_name, email, role, organization_id, employee_id, is_active, updated_at)
+                VALUES (%s, %s, %s, %s, 'team_member', %s, %s, TRUE, now())
+                RETURNING *
+                """,
+                (
+                    username,
+                    password_hash(password),
+                    employee["name"],
+                    email or employee.get("email"),
+                    organization_id,
+                    employee["id"],
+                ),
+            )
+            created_id = cur.fetchone()["id"]
+            cur.execute(
+                """
+                SELECT u.*, o.name AS organization_name, e.employee_no,
+                       p.name AS position_name, e.position
+                FROM app.app_users u
+                LEFT JOIN app.organizations o ON o.id = u.organization_id
+                LEFT JOIN app.employee_master e ON e.id = u.employee_id
+                LEFT JOIN app.employee_positions p ON p.code = e.position_code
+                WHERE u.id = %s
+                """,
+                (created_id,),
+            )
+            user = cur.fetchone()
     response.set_cookie(
         SESSION_COOKIE,
         sign_session(int(user["id"]), user["username"], user["role"]),
@@ -1780,10 +2145,14 @@ def auth_me(request: Request) -> dict[str, Any]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT u.*, o.name AS organization_name
+                SELECT u.*, o.name AS organization_name, e.employee_no,
+                       p.name AS position_name, e.position
                 FROM app.app_users u
                 LEFT JOIN app.organizations o ON o.id = u.organization_id
+                LEFT JOIN app.employee_master e ON e.id = u.employee_id
+                LEFT JOIN app.employee_positions p ON p.code = e.position_code
                 WHERE u.id = %s AND u.is_active = TRUE
+                  AND (u.employee_id IS NULL OR (e.is_active = TRUE AND e.employment_status = 'active'))
                 """,
                 (user["id"],),
             )
@@ -1794,7 +2163,8 @@ def auth_me(request: Request) -> dict[str, Any]:
 @app.get("/api/users")
 def list_users(request: Request) -> dict[str, Any]:
     ensure_permission(request, "menu.user.view")
-    return {"users": fetch_users_for_admin()}
+    employees = fetch_employees() if "menu.user.manage" in ROLE_PERMISSIONS.get(current_user_full(request).get("role") or "", set()) else []
+    return {"users": fetch_users_for_admin(), "employees": employees}
 
 
 @app.post("/api/users")
@@ -1804,12 +2174,18 @@ def create_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
     password = str(payload.get("password") or "")
     if not username or not password:
         raise HTTPException(status_code=400, detail="아이디와 비밀번호는 필수입니다.")
+    employee_id = parse_int(payload.get("employeeId")) or None
     with db() as conn:
         with conn.cursor() as cur:
+            if employee_id:
+                cur.execute("SELECT * FROM app.employee_master WHERE id = %s", (employee_id,))
+                employee = cur.fetchone()
+                if not employee:
+                    raise HTTPException(status_code=400, detail="직원 기준정보를 찾을 수 없습니다.")
             cur.execute(
                 """
-                INSERT INTO app.app_users (username, password_hash, display_name, email, role, organization_id, is_active, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, now())
+                INSERT INTO app.app_users (username, password_hash, display_name, email, role, organization_id, employee_id, is_active, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())
                 RETURNING *
                 """,
                 (
@@ -1819,15 +2195,19 @@ def create_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
                     payload.get("email"),
                     payload.get("role") or "team_member",
                     parse_int(payload.get("organizationId")) or None,
+                    employee_id,
                     parse_bool(payload.get("isActive", True)),
                 ),
             )
             created_id = cur.fetchone()["id"]
             cur.execute(
                 """
-                SELECT u.*, o.name AS organization_name
+                SELECT u.*, o.name AS organization_name, e.employee_no,
+                       p.name AS position_name, e.position
                 FROM app.app_users u
                 LEFT JOIN app.organizations o ON o.id = u.organization_id
+                LEFT JOIN app.employee_master e ON e.id = u.employee_id
+                LEFT JOIN app.employee_positions p ON p.code = e.position_code
                 WHERE u.id = %s
                 """,
                 (created_id,),
@@ -1840,12 +2220,14 @@ def create_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
 @app.put("/api/users/{item_id}")
 def update_user(item_id: int, payload: dict[str, Any], request: Request) -> dict[str, Any]:
     ensure_permission(request, "menu.user.manage")
+    employee_id = parse_int(payload.get("employeeId")) or None
     values: list[Any] = [
         str(payload.get("username") or "").strip(),
         payload.get("displayName"),
         payload.get("email"),
         payload.get("role") or "team_member",
         parse_int(payload.get("organizationId")) or None,
+        employee_id,
         parse_bool(payload.get("isActive", True)),
     ]
     password = str(payload.get("password") or "")
@@ -1856,10 +2238,14 @@ def update_user(item_id: int, payload: dict[str, Any], request: Request) -> dict
     values.append(item_id)
     with db() as conn:
         with conn.cursor() as cur:
+            if employee_id:
+                cur.execute("SELECT 1 FROM app.employee_master WHERE id = %s", (employee_id,))
+                if not cur.fetchone():
+                    raise HTTPException(status_code=400, detail="직원 기준정보를 찾을 수 없습니다.")
             cur.execute(
                 f"""
                 UPDATE app.app_users
-                SET username = %s, display_name = %s, email = %s, role = %s, organization_id = %s, is_active = %s,
+                SET username = %s, display_name = %s, email = %s, role = %s, organization_id = %s, employee_id = %s, is_active = %s,
                     updated_at = now(){password_sql}
                 WHERE id = %s
                 RETURNING *
@@ -1871,9 +2257,12 @@ def update_user(item_id: int, payload: dict[str, Any], request: Request) -> dict
                 raise HTTPException(status_code=404, detail="not found")
             cur.execute(
                 """
-                SELECT u.*, o.name AS organization_name
+                SELECT u.*, o.name AS organization_name, e.employee_no,
+                       p.name AS position_name, e.position
                 FROM app.app_users u
                 LEFT JOIN app.organizations o ON o.id = u.organization_id
+                LEFT JOIN app.employee_master e ON e.id = u.employee_id
+                LEFT JOIN app.employee_positions p ON p.code = e.position_code
                 WHERE u.id = %s
                 """,
                 (item_id,),
@@ -1894,6 +2283,212 @@ def delete_user(item_id: int, request: Request) -> dict[str, bool]:
             if cur.rowcount == 0:
                 raise HTTPException(status_code=404, detail="not found")
     write_audit_log(request, "delete", "app.app_users", item_id)
+    return {"ok": True}
+
+
+def employee_values(payload: dict[str, Any]) -> dict[str, Any]:
+    status = payload.get("employmentStatus") or "active"
+    if status not in {"active", "resigned", "leave"}:
+        status = "active"
+    return {
+        "employee_no": str(payload.get("employeeNo") or "").strip(),
+        "name": str(payload.get("name") or "").strip(),
+        "department_code": str(payload.get("departmentCode") or "").strip(),
+        "department_parent_name": str(payload.get("departmentParentName") or "").strip(),
+        "department_name": str(payload.get("departmentName") or "").strip(),
+        "position_code": str(payload.get("positionCode") or "").strip(),
+        "position_name": str(payload.get("positionName") or "").strip(),
+        "organization_id": parse_int(payload.get("organizationId")) or None,
+        "position": str(payload.get("positionName") or "").strip(),
+        "email": str(payload.get("email") or "").strip(),
+        "phone": "",
+        "employment_status": status,
+        "is_active": status == "active",
+        "joined_at": payload.get("joinedAt") or None,
+        "resigned_at": payload.get("resignedAt") or None,
+        "memo": str(payload.get("memo") or "").strip(),
+    }
+
+
+def validate_employee_values(values: dict[str, Any]) -> None:
+    if not values["employee_no"] or not values["name"]:
+        raise HTTPException(status_code=400, detail="사원번호와 이름은 필수입니다.")
+    if values["employment_status"] not in {"active", "resigned", "leave"}:
+        raise HTTPException(status_code=400, detail="재직상태는 재직, 퇴사, 휴직 중 하나여야 합니다.")
+    if not values.get("joined_at") or not values.get("resigned_at"):
+        raise HTTPException(status_code=400, detail="입사일과 퇴사일은 필수입니다.")
+    for key, label_text in (("joined_at", "입사일"), ("resigned_at", "퇴사일")):
+        try:
+            date.fromisoformat(str(values[key]))
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"{label_text}은 YYYY-MM-DD 형식이어야 합니다.")
+
+
+def upsert_employee_reference_tables(cur, values: dict[str, Any]) -> None:
+    department_code = values.get("department_code") or ""
+    department_name = values.get("department_name") or ""
+    if department_code and department_name:
+        parent_name = values.get("department_parent_name") or None
+        raw_name = f"{parent_name or ''} {department_name}".strip()
+        cur.execute(
+            """
+            INSERT INTO app.employee_departments (code, parent_name, name, raw_name, is_active, updated_at)
+            VALUES (%s, %s, %s, %s, TRUE, now())
+            ON CONFLICT (code)
+            DO UPDATE SET parent_name = EXCLUDED.parent_name,
+                          name = EXCLUDED.name,
+                          raw_name = EXCLUDED.raw_name,
+                          is_active = TRUE,
+                          updated_at = now()
+            """,
+            (department_code, parent_name, department_name, raw_name),
+        )
+    position_code = values.get("position_code") or ""
+    position_name = values.get("position_name") or ""
+    if position_code and position_name:
+        cur.execute(
+            """
+            INSERT INTO app.employee_positions (code, name, is_active, updated_at)
+            VALUES (%s, %s, TRUE, now())
+            ON CONFLICT (code)
+            DO UPDATE SET name = EXCLUDED.name,
+                          is_active = TRUE,
+                          updated_at = now()
+            """,
+            (position_code, position_name),
+        )
+
+
+def sync_employee_user_status(cur, employee_id: int, values: dict[str, Any]) -> None:
+    if values["employment_status"] != "active" or not values["is_active"]:
+        cur.execute(
+            """
+            UPDATE app.app_users
+            SET is_active = FALSE, updated_at = now()
+            WHERE employee_id = %s
+            """,
+            (employee_id,),
+        )
+
+
+@app.get("/api/employees")
+def list_employees(request: Request) -> dict[str, Any]:
+    ensure_permission(request, "menu.user.manage")
+    return {"employees": fetch_employees()}
+
+
+@app.post("/api/employees")
+def create_employee(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    ensure_permission(request, "menu.user.manage")
+    values = employee_values(payload)
+    validate_employee_values(values)
+    with db() as conn:
+        with conn.cursor() as cur:
+            upsert_employee_reference_tables(cur, values)
+            cur.execute(
+                """
+                INSERT INTO app.employee_master
+                    (employee_no, name, department_code, position_code, organization_id, position, email, phone, employment_status,
+                     is_active, joined_at, resigned_at, memo, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                RETURNING id
+                """,
+                tuple(values[key] for key in (
+                    "employee_no", "name", "department_code", "position_code", "organization_id", "position", "email", "phone",
+                    "employment_status", "is_active", "joined_at", "resigned_at", "memo"
+                )),
+            )
+            employee_id = cur.fetchone()["id"]
+            sync_employee_user_status(cur, employee_id, values)
+            cur.execute(
+                """
+                SELECT e.*, o.name AS organization_name,
+                       d.parent_name AS department_parent_name, d.name AS department_name,
+                       p.name AS position_name
+                FROM app.employee_master e
+                LEFT JOIN app.organizations o ON o.id = e.organization_id
+                LEFT JOIN app.employee_departments d ON d.code = e.department_code
+                LEFT JOIN app.employee_positions p ON p.code = e.position_code
+                WHERE e.id = %s
+                """,
+                (employee_id,),
+            )
+            created = client_employee(cur.fetchone())
+    write_audit_log(request, "create", "app.employee_master", created["id"], created["employeeNo"])
+    return created
+
+
+@app.put("/api/employees/{item_id}")
+def update_employee(item_id: int, payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    ensure_permission(request, "menu.user.manage")
+    values = employee_values(payload)
+    validate_employee_values(values)
+    with db() as conn:
+        with conn.cursor() as cur:
+            upsert_employee_reference_tables(cur, values)
+            cur.execute(
+                """
+                UPDATE app.employee_master
+                SET employee_no = %s, name = %s, department_code = %s, position_code = %s,
+                    organization_id = %s, position = %s, email = %s, phone = %s,
+                    employment_status = %s, is_active = %s, joined_at = %s, resigned_at = %s, memo = %s,
+                    updated_at = now()
+                WHERE id = %s
+                RETURNING id
+                """,
+                (*tuple(values[key] for key in (
+                    "employee_no", "name", "department_code", "position_code", "organization_id", "position", "email", "phone",
+                    "employment_status", "is_active", "joined_at", "resigned_at", "memo"
+                )), item_id),
+            )
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="not found")
+            sync_employee_user_status(cur, item_id, values)
+            cur.execute(
+                """
+                SELECT e.*, o.name AS organization_name,
+                       d.parent_name AS department_parent_name, d.name AS department_name,
+                       p.name AS position_name
+                FROM app.employee_master e
+                LEFT JOIN app.organizations o ON o.id = e.organization_id
+                LEFT JOIN app.employee_departments d ON d.code = e.department_code
+                LEFT JOIN app.employee_positions p ON p.code = e.position_code
+                WHERE e.id = %s
+                """,
+                (item_id,),
+            )
+            updated = client_employee(cur.fetchone())
+    write_audit_log(request, "update", "app.employee_master", item_id, updated["employeeNo"])
+    return updated
+
+
+@app.delete("/api/employees/{item_id}")
+def delete_employee(item_id: int, request: Request) -> dict[str, bool]:
+    ensure_permission(request, "menu.user.manage")
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE app.employee_master
+                SET is_active = FALSE, employment_status = 'resigned',
+                    resigned_at = COALESCE(resigned_at, CURRENT_DATE), updated_at = now()
+                WHERE id = %s
+                RETURNING employee_no
+                """,
+                (item_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="not found")
+            cur.execute(
+                """
+                UPDATE app.app_users
+                SET is_active = FALSE, updated_at = now()
+                WHERE employee_id = %s
+                """,
+                (item_id,),
+            )
+    write_audit_log(request, "delete", "app.employee_master", item_id, row.get("employee_no") or "")
     return {"ok": True}
 
 
@@ -2025,6 +2620,7 @@ def delete_organization(item_id: int, request: Request) -> dict[str, bool]:
                 raise HTTPException(status_code=409, detail="하위 부서가 있는 조직은 삭제할 수 없습니다.")
             checks = [
                 ("app.app_users", "organization_id"),
+                ("app.employee_master", "organization_id"),
                 ("app.contract_organizations", "organization_id"),
                 ("app.document_organizations", "organization_id"),
             ]
@@ -2081,6 +2677,7 @@ def bootstrap(request: Request) -> dict[str, Any]:
         "organizationContractLinks": fetch_organization_contract_links() if "menu.organization.manage" in permissions else [],
         "allowedContractOrganizationIds": get_allowed_contract_organization_ids(user),
         "users": fetch_selectable_users(user),
+        "employees": fetch_employees() if "menu.user.manage" in permissions else [],
         "permissions": permissions,
         "config": {"defaultAlertDays": 60, "uploadDir": CONFIG["UPLOAD_DIR"]},
     }
@@ -2576,17 +3173,31 @@ def load_excel_import_refs() -> dict[str, Any]:
             organizations = cur.fetchall()
             cur.execute("SELECT id, username, display_name FROM app.app_users WHERE is_active = TRUE")
             users = cur.fetchall()
+            cur.execute("SELECT employee_no, name FROM app.employee_master")
+            employees = cur.fetchall()
             cur.execute("SELECT id, company_id, name FROM contracts")
             contracts = cur.fetchall()
             cur.execute("SELECT contract_id, work_date, title FROM work_logs")
             worklogs = cur.fetchall()
+    normalized_organizations: dict[str, list[int]] = {}
+    for row in organizations:
+        key = normalize_organization_name(row["name"])
+        if key:
+            normalized_organizations.setdefault(key, []).append(row["id"])
+    unique_normalized_organizations = {
+        key: ids[0]
+        for key, ids in normalized_organizations.items()
+        if len(set(ids)) == 1
+    }
     return {
         "companies_by_name": {row["name"]: row for row in companies},
         "companies_by_business_no": {row["business_no"]: row for row in companies if row.get("business_no")},
         "company_names": {row["name"] for row in companies},
         "company_business_nos": {row["business_no"] for row in companies if row.get("business_no")},
         "organizations_by_name": {row["name"]: row["id"] for row in organizations},
+        "organizations_by_normalized_name": unique_normalized_organizations,
         "users_by_username": {row["username"]: row for row in users},
+        "employee_keys": {(row["employee_no"], row["name"]) for row in employees},
         "contracts_by_company_name": {(row["company_id"], row["name"]): row for row in contracts},
         "contract_keys": {(row["company_id"], row["name"]) for row in contracts},
         "worklog_keys": {(row["contract_id"], str(row["work_date"]), row["title"]) for row in worklogs},
@@ -2615,6 +3226,23 @@ def validate_excel_rows(kind: str, rows: list[dict[str, str]]) -> tuple[list[dic
             seen_company_names.add(payload["name"])
             if payload["businessNo"]:
                 seen_company_business_nos.add(payload["businessNo"])
+        elif kind == "employees":
+            payload = csv_employee(row, refs)
+            if not payload["employeeNo"] or not payload["name"]:
+                row_errors.append("사원번호와 이름은 필수입니다.")
+            if payload["employmentStatus"] not in {"active", "resigned", "leave"}:
+                row_errors.append("재직상태는 재직, 퇴사, 휴직 중 하나여야 합니다.")
+            for field, label_text in (("joinedAt", "입사일"), ("resignedAt", "퇴사일")):
+                if not payload.get(field):
+                    row_errors.append(f"{label_text}은 필수입니다.")
+                    continue
+                try:
+                    date.fromisoformat(str(payload[field]))
+                except ValueError:
+                    row_errors.append(f"{label_text}은 YYYY-MM-DD 형식이어야 합니다.")
+            key = (payload["employeeNo"], payload["name"])
+            if key in refs["employee_keys"]:
+                row_errors.append("이미 등록된 사원번호와 이름 조합입니다.")
         elif kind == "contracts":
             payload = csv_contract(row, refs)
             if not payload["companyId"]:
@@ -2707,6 +3335,22 @@ def insert_excel_rows(kind: str, payloads: list[dict[str, Any]]) -> int:
                             """,
                             (company_id, payload["manager"], payload["phone"], payload["email"]),
                         )
+            elif kind == "employees":
+                for payload in payloads:
+                    values = employee_values(payload)
+                    upsert_employee_reference_tables(cur, values)
+                    cur.execute(
+                        """
+                        INSERT INTO app.employee_master
+                            (employee_no, name, department_code, position_code, organization_id, position, email, phone, employment_status,
+                             is_active, joined_at, resigned_at, memo, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                        """,
+                        tuple(values[key] for key in (
+                            "employee_no", "name", "department_code", "position_code", "organization_id", "position", "email", "phone",
+                            "employment_status", "is_active", "joined_at", "resigned_at", "memo"
+                        )),
+                    )
             elif kind == "contracts":
                 cur.execute("SELECT id, username, display_name FROM app.app_users WHERE is_active = TRUE")
                 manager_names = {
@@ -2799,20 +3443,21 @@ async def excel_import(
     commit: bool = Form(False),
 ) -> dict[str, Any]:
     ensure_excel_import_admin(request)
-    if kind not in {"companies", "contracts", "worklogs"}:
+    if kind not in {"companies", "contracts", "worklogs", "employees"}:
         raise HTTPException(status_code=404, detail="지원하지 않는 Excel 종류입니다.")
     if not str(file.filename or "").lower().endswith(".xlsx"):
         raise HTTPException(status_code=400, detail=".xlsx 파일만 업로드할 수 있습니다.")
     rows = decode_excel_upload(await file.read())
     if not rows:
         raise HTTPException(status_code=400, detail="등록할 데이터 행이 없습니다.")
-    if len(rows) > 1000:
-        raise HTTPException(status_code=400, detail="한 번에 최대 1,000행까지 등록할 수 있습니다.")
+    max_rows = 5000 if kind == "employees" else 1000
+    if len(rows) > max_rows:
+        raise HTTPException(status_code=400, detail=f"한 번에 최대 {max_rows:,}행까지 등록할 수 있습니다.")
     payloads, errors = validate_excel_rows(kind, rows)
     if errors or not commit:
         return {"total": len(rows), "valid": len(rows) - len(errors), "errors": errors, "committed": 0}
     created = insert_excel_rows(kind, payloads)
-    audit_tables = {"companies": "public.companies", "contracts": "public.contracts", "worklogs": "public.work_logs"}
+    audit_tables = {"companies": "public.companies", "contracts": "public.contracts", "worklogs": "public.work_logs", "employees": "app.employee_master"}
     write_audit_log(request, "excel_import", audit_tables[kind], None, f"{created} rows")
     return {"total": len(rows), "valid": len(rows), "errors": [], "committed": created}
 
@@ -2836,6 +3481,47 @@ async def create_document(
     return result
 
 
+@app.post("/api/documents/bulk")
+async def create_documents_bulk(
+    request: Request,
+    companyId: int = Form(...),
+    contractId: int | None = Form(None),
+    organizationId: int | None = Form(None),
+    category: str = Form("contract"),
+    categories: list[str] | None = Form(None),
+    memo: str = Form(""),
+    files: list[UploadFile] = File(...),
+) -> dict[str, Any]:
+    ensure_permission(request, "menu.document.create")
+    if not files:
+        raise HTTPException(status_code=400, detail="업로드할 파일을 선택해 주세요.")
+    if len(files) > 100:
+        raise HTTPException(status_code=400, detail="한 번에 최대 100개 파일까지 등록할 수 있습니다.")
+    ensure_company_access(companyId, request)
+    user = current_user_full(request)
+    resolved_organization_id = organization_for_document(contractId, organizationId, user)
+
+    created: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for index, file in enumerate(files):
+        filename = file.filename or "file"
+        try:
+            title = Path(filename).stem or filename
+            file_category = categories[index] if categories and index < len(categories) and categories[index] else category
+            result = await save_document(None, companyId, contractId, resolved_organization_id, file_category, title, memo, file)
+            created.append(result)
+            write_audit_log(request, "create", "public.documents", result["id"], result.get("title") or "")
+        except Exception as exc:
+            errors.append({"fileName": filename, "error": str(exc)})
+    return {
+        "total": len(files),
+        "created": len(created),
+        "failed": len(errors),
+        "documents": created,
+        "errors": errors,
+    }
+
+
 @app.put("/api/documents/{item_id}")
 async def update_document(
     request: Request,
@@ -2855,7 +3541,6 @@ async def update_document(
     result = await save_document(item_id, companyId, contractId, organization_for_document(contractId, organizationId, user), category, title, memo, file)
     write_audit_log(request, "update", "public.documents", item_id, result.get("title") or "")
     return result
-
 
 async def save_document(
     item_id: int | None,
