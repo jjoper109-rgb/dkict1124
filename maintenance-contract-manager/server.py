@@ -1426,6 +1426,7 @@ def ensure_contract_update_permission(request: Request) -> dict[str, Any]:
 
 def ensure_contract_delete_permission(item_id: int, request: Request) -> None:
     ensure_permission(request, "menu.contract.delete")
+    ensure_contract_access(item_id, request)
 
 
 def ensure_admin_delete(request: Request) -> None:
@@ -1652,7 +1653,14 @@ def ensure_company_access(company_id: int, request: Request) -> None:
 
 def ensure_contract_access(contract_id: int, request: Request) -> None:
     user = current_user_full(request)
+    if not contract_id:
+        raise HTTPException(status_code=404, detail="contract not found")
     if user.get("role") in FULL_ACCESS_ROLES:
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM public.contracts WHERE id = %s", (contract_id,))
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail="contract not found")
         return
     organization_ids = [parse_int(value) for value in get_allowed_contract_organization_ids(user)]
     organization_ids = [value for value in organization_ids if value]
@@ -1671,9 +1679,31 @@ def ensure_contract_access(contract_id: int, request: Request) -> None:
             if not cur.fetchone():
                 raise HTTPException(status_code=403, detail="조직 권한이 없습니다.")
 
+def ensure_contract_company_match(contract_id: int | None, company_id: int | None, request: Request) -> None:
+    contract_id = parse_int(contract_id)
+    if not contract_id:
+        return
+    ensure_contract_access(contract_id, request)
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT company_id FROM public.contracts WHERE id = %s", (contract_id,))
+            row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="contract not found")
+    if company_id and parse_int(row.get("company_id")) != parse_int(company_id):
+        raise HTTPException(status_code=400, detail="계약과 업체가 일치하지 않습니다.")
+
+
 def ensure_document_access(document_id: int, request: Request) -> None:
     user = current_user_full(request)
+    if not document_id:
+        raise HTTPException(status_code=404, detail="document not found")
     if user.get("role") in FULL_ACCESS_ROLES:
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM public.documents WHERE id = %s", (document_id,))
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail="document not found")
         return
     organization_ids = [parse_int(value) for value in get_allowed_contract_organization_ids(user)]
     organization_ids = [value for value in organization_ids if value]
@@ -1702,7 +1732,14 @@ def ensure_item_company_access(table: str, item_id: int, request: Request) -> No
 
 def ensure_worklog_access(item_id: int, request: Request) -> None:
     user = current_user_full(request)
+    if not item_id:
+        raise HTTPException(status_code=404, detail="worklog not found")
     if user.get("role") in FULL_ACCESS_ROLES:
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM public.work_logs WHERE id = %s", (item_id,))
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail="worklog not found")
         return
     organization_ids = [parse_int(value) for value in get_allowed_contract_organization_ids(user)]
     organization_ids = [value for value in organization_ids if value]
@@ -1725,9 +1762,11 @@ def ensure_worklog_access(item_id: int, request: Request) -> None:
 
 def ensure_worklog_contract_access(payload: dict[str, Any], request: Request) -> None:
     user = current_user_full(request)
-    if user.get("role") in FULL_ACCESS_ROLES:
-        return
     contract_id = parse_int(payload.get("contractId"))
+    if user.get("role") in FULL_ACCESS_ROLES:
+        if contract_id:
+            ensure_contract_company_match(contract_id, parse_int(payload.get("companyId")), request)
+        return
     if not contract_id:
         raise HTTPException(status_code=403, detail="관련 계약을 선택해 주세요.")
     ensure_contract_access(contract_id, request)
@@ -3031,9 +3070,12 @@ def save_contract_details(item_id: int, payload: dict[str, Any], user: dict[str,
 @app.post("/api/pending-items")
 def create_pending_item(payload: dict[str, Any], request: Request) -> dict[str, Any]:
     ensure_permission(request, "menu.pending.create")
+    company_id = parse_int(payload.get("companyId"))
+    if company_id:
+        ensure_company_access(company_id, request)
     contract_id = parse_int(payload.get("contractId"))
     if contract_id:
-        ensure_contract_access(contract_id, request)
+        ensure_contract_company_match(contract_id, company_id, request)
     result = insert_row("app.pending_items", pending_item_values(payload))
     write_audit_log(request, "create", "app.pending_items", result["id"], result.get("title") or "")
     return result
@@ -3048,7 +3090,10 @@ def update_pending_item(item_id: int, payload: dict[str, Any], request: Request)
         ensure_contract_access(existing_contract_id, request)
     contract_id = parse_int(payload.get("contractId"))
     if contract_id:
-        ensure_contract_access(contract_id, request)
+        ensure_contract_company_match(contract_id, parse_int(payload.get("companyId")), request)
+    company_id = parse_int(payload.get("companyId"))
+    if company_id:
+        ensure_company_access(company_id, request)
     result = update_row("app.pending_items", item_id, pending_item_values(payload))
     write_audit_log(request, "update", "app.pending_items", item_id, result.get("title") or "")
     return result
@@ -3475,6 +3520,7 @@ async def create_document(
 ) -> dict[str, Any]:
     ensure_permission(request, "menu.document.create")
     ensure_company_access(companyId, request)
+    ensure_contract_company_match(contractId, companyId, request)
     user = current_user_full(request)
     result = await save_document(None, companyId, contractId, organization_for_document(contractId, organizationId, user), category, title, memo, file)
     write_audit_log(request, "create", "public.documents", result["id"], result.get("title") or "")
@@ -3498,6 +3544,7 @@ async def create_documents_bulk(
     if len(files) > 100:
         raise HTTPException(status_code=400, detail="한 번에 최대 100개 파일까지 등록할 수 있습니다.")
     ensure_company_access(companyId, request)
+    ensure_contract_company_match(contractId, companyId, request)
     user = current_user_full(request)
     resolved_organization_id = organization_for_document(contractId, organizationId, user)
 
@@ -3537,6 +3584,7 @@ async def update_document(
     ensure_permission(request, "menu.document.update")
     ensure_document_access(item_id, request)
     ensure_company_access(companyId, request)
+    ensure_contract_company_match(contractId, companyId, request)
     user = current_user_full(request)
     result = await save_document(item_id, companyId, contractId, organization_for_document(contractId, organizationId, user), category, title, memo, file)
     write_audit_log(request, "update", "public.documents", item_id, result.get("title") or "")
@@ -3595,12 +3643,15 @@ def organization_for_document(contract_id: int | None, organization_id: int | No
 
 
 def ensure_contract_id_for_user(contract_id: int, user: dict[str, Any]) -> None:
-    organization_id = parse_int(user.get("organizationId"))
+    organization_ids = [parse_int(value) for value in get_allowed_contract_organization_ids(user)]
+    organization_ids = [value for value in organization_ids if value]
+    if not organization_ids:
+        raise HTTPException(status_code=403, detail="議곗쭅 沅뚰븳???놁뒿?덈떎.")
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT 1 FROM app.contract_organizations WHERE contract_id = %s AND organization_id = %s",
-                (contract_id, organization_id),
+                "SELECT 1 FROM app.contract_organizations WHERE contract_id = %s AND organization_id = ANY(%s)",
+                (contract_id, organization_ids),
             )
             if not cur.fetchone():
                 raise HTTPException(status_code=403, detail="조직 권한이 없습니다.")
