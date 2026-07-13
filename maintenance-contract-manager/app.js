@@ -2246,7 +2246,10 @@ function renderExpiryCalendar(contracts) {
         const day = index - leadingDays + 1;
         const inMonth = day >= 1 && day <= lastDate.getDate();
         const dayContracts = inMonth ? byDay.get(day) || [] : [];
-        const isToday = inMonth && day === today.getDate();
+        const isToday = inMonth
+          && year === today.getFullYear()
+          && month === today.getMonth()
+          && day === today.getDate();
         return `
           <div class="calendar-day ${inMonth ? "" : "is-muted"} ${isToday ? "is-today" : ""} ${dayContracts.length ? "has-contract" : ""}">
             ${inMonth ? `
